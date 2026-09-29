@@ -15,6 +15,14 @@ Item {
   property var targetScreen: null
   property var doc: null
   property int selectedIndex: -1
+  readonly property bool freeLayout: doc!==null && doc.layout==="free"
+  property int canvasPage: 1
+  property bool showPdf: false
+  property string assetBaseUrl: ""
+  property bool snapToGrid: false
+  property real canvasZoom: 1
+  onSelectedIndexChanged: {if(freeLayout && selected && selected.frame)canvasPage=selected.frame.page}
+
   readonly property var selected: doc && selectedIndex>=0 && selectedIndex<doc.blocks.length ? doc.blocks[selectedIndex] : null
   property bool dirty: false
   property var undoStack: []
@@ -58,7 +66,7 @@ Item {
   function close() {imagePicker.close();opened=false;confirmAction="";queuedAction="";followup.stop()}
   function setDoc(d) {
     doc=clone(d);selectedIndex=d.blocks.length ? 0 : -1;dirty=false
-    undoStack=[];redoStack=[];editGroup="";outputUrl="";previewUrl="";previewPage=1;previewPages=1;previewStale=false
+    undoStack=[];redoStack=[];editGroup="";outputUrl="";previewUrl="";previewPage=1;previewPages=1;previewStale=false;canvasPage=d.layout==="free" && d.blocks.length?d.blocks[0].frame.page:1;showPdf=false
   }
   function uuid() {return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,function(c){var r=Math.floor(Math.random()*16);return (c==="x"?r:(r&3|8)).toString(16)})}
   function change(next,group) {
@@ -67,12 +75,70 @@ Item {
     editGroup=group || "";coalesce.restart();redoStack=[];doc=next;dirty=true;previewStale=true;outputUrl=""
   }
   function edit(key,value) {var d=clone(doc);d[key]=value;change(d,"document-"+key)}
-  function pageEdit(key,value) {var d=clone(doc);d.page[key]=value;change(d,"page-"+key)}
+  function dimensions(d) {var size=d.page.size==="A4"?[595.28,841.89]:[612,792];return d.page.orientation==="landscape"?[size[1],size[0]]:size}
+  function fitFrame(f,d) {
+    var size=dimensions(d),out=clone(f)
+    out.width=Math.max(24,Math.min(size[0],Number(out.width)));out.height=Math.max(12,Math.min(size[1],Number(out.height)))
+    out.x=Math.max(0,Math.min(size[0]-out.width,Number(out.x)));out.y=Math.max(0,Math.min(size[1]-out.height,Number(out.y)))
+    out.page=Math.max(1,Math.min(d.pageCount,Math.round(Number(out.page))))
+    return out
+  }
+  function pageEdit(key,value) {
+    var d=clone(doc);d.page[key]=value
+    if(d.layout==="free")d.blocks.forEach(function(b){b.frame=fitFrame(b.frame,d)})
+    change(d,"page-"+key)
+  }
+  function setLayout(free) {
+    if(!doc || free===freeLayout)return
+    var d=clone(doc)
+    if(free){
+      var size=dimensions(d),margin=d.page.margin,y=margin,page=1,blocks=[]
+      d.schema=2;d.layout="free";d.pageCount=50
+      d.blocks.forEach(function(b){
+        if(b.type==="pageBreak"){page++;y=margin;return}
+        var h=b.type==="heading"?Math.max(48,b.size*2):b.type==="divider"?12:b.type==="spacer"?b.height:b.type==="image"?b.height:b.type==="table"?Math.min(300,b.rows.length*40):140
+        h=Math.min(h,size[1]-margin*2)
+        if(y+h>size[1]-margin){page++;y=margin}
+        b.frame=fitFrame({page:page,x:margin,y:y,width:size[0]-margin*2,height:h},d);blocks.push(b);y+=h+b.spacing
+      })
+      if(page>50){status="Free layout supports 50 pages. Remove some page breaks or blocks before converting.";return}
+      d.blocks=blocks;d.pageCount=page
+    }else{
+      d.blocks.sort(function(a,b){return a.frame.page-b.frame.page || a.frame.y-b.frame.y || a.frame.x-b.frame.x})
+      d.blocks.forEach(function(b){delete b.frame});delete d.layout;delete d.pageCount;d.schema=1
+    }
+    change(d,"");selectedIndex=d.blocks.length?0:-1;canvasPage=free && d.blocks.length?d.blocks[0].frame.page:1;showPdf=false;previewUrl=""
+    status=free?"Free layout enabled. Drag and resize blocks; content outside a frame is clipped. Refresh to check the exact PDF.":"Flow layout restored in page / top-to-bottom order. Undo restores positioning."
+  }
+  function commitFrame(index,x,y,w,h) {
+    if(!freeLayout || index<0 || index>=doc.blocks.length)return
+    var d=clone(doc),f=d.blocks[index].frame
+    d.blocks[index].frame=fitFrame({page:f.page,x:x,y:y,width:w,height:h},d)
+    change(d,"");selectedIndex=index
+  }
+  function frameEdit(key,value) {
+    if(!freeLayout || !selected)return
+    var d=clone(doc),f=d.blocks[selectedIndex].frame;f[key]=value;d.blocks[selectedIndex].frame=fitFrame(f,d)
+    change(d,"frame-"+key);canvasPage=d.blocks[selectedIndex].frame.page
+  }
+  function nudge(dx,dy) {if(!selected || !freeLayout)return;var f=selected.frame;commitFrame(selectedIndex,f.x+dx,f.y+dy,f.width,f.height)}
+  function addPage() {if(!freeLayout || doc.pageCount>=50)return;var d=clone(doc);d.pageCount++;change(d,"");canvasPage=d.pageCount;selectedIndex=-1;showPdf=false}
+  function removeEmptyPage() {
+    if(!freeLayout || doc.pageCount<=1)return
+    if(doc.blocks.some(function(b){return b.frame.page===canvasPage})){status="Move or remove this page's blocks first.";return}
+    var d=clone(doc);d.blocks.forEach(function(b){if(b.frame.page>canvasPage)b.frame.page--});d.pageCount--;change(d,"");canvasPage=Math.min(canvasPage,d.pageCount);selectedIndex=-1;showPdf=false;previewUrl=""
+  }
+  function moveLayer(front) {
+    if(!selected || !freeLayout)return
+    var d=clone(doc),b=d.blocks.splice(selectedIndex,1)[0];if(front)d.blocks.push(b);else d.blocks.unshift(b)
+    change(d,"");selectedIndex=front?d.blocks.length-1:0
+  }
   function blockEdit(key,value) {
     if(!selected) return
     var d=clone(doc);d.blocks[selectedIndex][key]=value;change(d,selected.id+key)
   }
   function addBlock(type) {
+    if(freeLayout && type==="pageBreak"){addPage();return}
     if(!doc || doc.blocks.length>=80 || types.indexOf(type)<0) return
     if(type==="image" && doc.blocks.filter(function(b){return b.type==="image"}).length>=8){status="Use at most eight images.";return}
     var b={id:uuid(),type:type,font:"sans",size:type==="heading"?26:11,bold:type==="heading",color:"#18212b",align:"left",spacing:12}
@@ -81,7 +147,9 @@ Item {
     if(type==="table"){b.rows=[["Item","Details"],["First item","Description"]];b.header=true}
     if(type==="image"){b.asset="";b.width=100;b.height=180;b.text=""}
     if(type==="divider" || type==="spacer")b.height=type==="divider"?1:24
-    var d=clone(doc);var index=selectedIndex<0?d.blocks.length:selectedIndex+1;d.blocks.splice(index,0,b);change(d,"");selectedIndex=index
+    var d=clone(doc)
+    if(freeLayout){var size=dimensions(d);b.frame=fitFrame({page:canvasPage,x:d.page.margin,y:d.page.margin,width:Math.min(280,size[0]-2*d.page.margin),height:type==="heading"?60:type==="divider"?12:140},d)}
+    var index=selectedIndex<0?d.blocks.length:selectedIndex+1;d.blocks.splice(index,0,b);change(d,"");selectedIndex=index
   }
   function moveBlock(delta) {
     var i=selectedIndex,j=i+delta;if(!selected || j<0 || j>=doc.blocks.length)return
@@ -94,7 +162,7 @@ Item {
   function duplicateBlock() {
     if(!selected || doc.blocks.length>=80)return
     if(selected.type==="image" && doc.blocks.filter(function(b){return b.type==="image"}).length>=8){status="Use at most eight images.";return}
-    var d=clone(doc),b=clone(selected);b.id=uuid();d.blocks.splice(selectedIndex+1,0,b);change(d,"");selectedIndex++
+    var d=clone(doc),b=clone(selected);b.id=uuid();if(freeLayout){b.frame.x+=12;b.frame.y+=12;b.frame=fitFrame(b.frame,d)}d.blocks.splice(selectedIndex+1,0,b);change(d,"");selectedIndex++
   }
   function history(redo) {
     if(busy || !doc || confirmAction!=="")return
@@ -102,7 +170,7 @@ Item {
     var d=clone(from[from.length-1]);d.revision=doc.revision
     if(redo){redoStack=from.slice(0,-1);undoStack=undoStack.concat([clone(doc)]).slice(-30)}
     else {undoStack=from.slice(0,-1);redoStack=redoStack.concat([clone(doc)]).slice(-30)}
-    doc=d;selectedIndex=Math.min(selectedIndex,d.blocks.length-1);dirty=true;previewStale=true;outputUrl="";editGroup=""
+    doc=d;selectedIndex=Math.min(selectedIndex,d.blocks.length-1);canvasPage=d.layout==="free"?Math.min(canvasPage,d.pageCount):1;showPdf=false;dirty=true;previewStale=true;outputUrl="";editGroup=""
   }
   function tableCell(row,col,text) {var rows=clone(selected.rows);rows[row][col]=text;blockEdit("rows",rows)}
   function tableSize(axis,delta) {
@@ -146,7 +214,7 @@ Item {
   function receiveExit(code,exitStatus) {if(!inFlight)return;responseCode=code;responseExitStatus=exitStatus;receivedExit=true;finishRequest()}
   function validResponse(r) {
     var a=worker.action
-    if(["designNew","designLoad","designSave","designUseTemplate"].indexOf(a)>=0)return r.document && r.document.schema===1 && typeof r.document.id==="string" && Number.isSafeInteger(r.document.revision) && typeof r.document.title==="string" && r.document.page && Array.isArray(r.document.blocks) && r.document.blocks.length<=80
+    if(["designNew","designLoad","designSave","designUseTemplate"].indexOf(a)>=0)return r.document && (r.document.schema===1 || r.document.schema===2) && typeof r.document.id==="string" && Number.isSafeInteger(r.document.revision) && typeof r.document.title==="string" && r.document.page && Array.isArray(r.document.blocks) && r.document.blocks.length<=80
     if(a==="designList")return Array.isArray(r.entries) && r.entries.length<=50 && Number.isInteger(r.offset) && r.offset>=0 && Number.isInteger(r.total) && r.total>=0 && r.total<=128 && r.entries.every(function(e){return e && typeof e.id==="string" && typeof e.title==="string"})
     if(a==="designTemplate")return r.template && typeof r.template.id==="string"
     if(a==="designImport")return typeof r.asset==="string" && /^[0-9a-f]{64}\.(png|jpg)$/.test(r.asset)
@@ -162,6 +230,7 @@ Item {
     if(responseCode!==0 || responseExitStatus!==0){failRequest("Helper stopped unexpectedly. Reload the saved document to check whether the save completed.");return}
     if(!validResponse(r)){failRequest("Incomplete helper response. Your edits have been kept.");return}
     var action=worker.action;inFlight=false;responseText=""
+    if(r.assetBaseUrl)assetBaseUrl=r.assetBaseUrl
     if(r.document){
       if(action==="designSave"){doc=clone(r.document);dirty=false;editGroup=""}
       else setDoc(r.document)
@@ -172,7 +241,7 @@ Item {
       if(i>=0){undoStack=undoStack.concat([clone(doc)]).slice(-30);redoStack=[];d.blocks[i].asset=r.asset;doc=d;dirty=true;previewStale=true;outputUrl="";editGroup=""}
     }
     if(r.url)outputUrl=r.url
-    if(action==="designPreview") {previewUrl=r.previewUrl || "";previewPage=r.page || 1;previewPages=r.pages || 1;previewStale=false}
+    if(action==="designPreview") {previewUrl=r.previewUrl || "";previewPage=r.page || 1;previewPages=r.pages || 1;previewStale=false;if(freeLayout){showPdf=true;canvasPage=previewPage}}
     status=action==="designSave"?"Document saved":action==="designTemplate"?"Template saved — select Templates to use it":action==="designExport"?"PDF exported to Documents / PDF Studio":action==="designPreview"?(r.previewError || "Preview ready"):"Ready"
     if(opened && queuedAction)followup.start()
     else if(opened && (action==="designNew" || action==="designSave" || action==="designTemplate")){queuedAction="designList";queuedArgs={template:showTemplates,offset:0};followup.start()}
@@ -272,7 +341,7 @@ Item {
           ColumnLayout {
             Layout.preferredWidth:220;Layout.maximumWidth:220;Layout.fillHeight:true
             enabled:!root.busy && root.doc!==null
-            Caption {text:"BLOCKS · "+(root.doc?root.doc.blocks.length:0)+" / 80"}
+            Caption {text:(root.freeLayout?"LAYERS · BACK TO FRONT · ":"BLOCKS · ")+(root.doc?root.doc.blocks.length:0)+" / 80"}
             ComboBox {Layout.fillWidth:true;model:root.typeNames;displayText:"+ Add block";onActivated:function(index){root.addBlock(root.types[index])}}
             ListView {
               id:blockList;Layout.fillWidth:true;Layout.fillHeight:true;clip:true;spacing:4;model:root.doc?root.doc.blocks:[]
@@ -286,7 +355,7 @@ Item {
                   Label {width:parent.width;text:(index+1)+"  "+root.typeNames[root.types.indexOf(modelData.type)];color:Color.popups.text;font.bold:true}
                   Label {width:parent.width;text:modelData.text || (modelData.type==="image"?(modelData.asset?"Image imported":"Choose an image"):"");textFormat:Text.PlainText;color:Color.popups.text;opacity:0.65;elide:Text.ElideRight;maximumLineCount:1}
                 }
-                onClicked:{root.selectedIndex=index;root.editGroup=""}
+                onClicked:{root.selectedIndex=index;if(root.freeLayout)root.showPdf=false;root.editGroup=""}
               }
             }
             RowLayout {
@@ -294,24 +363,46 @@ Item {
               Button {Layout.preferredWidth:60;Layout.minimumWidth:0;text:"↓";enabled:root.selected && root.selectedIndex<root.doc.blocks.length-1;onClicked:root.moveBlock(1);Accessible.name:"Move block down"}
               Button {Layout.preferredWidth:80;Layout.minimumWidth:0;text:"Copy";enabled:root.selected!==null;onClicked:root.duplicateBlock()}
             }
+            RowLayout {
+              visible:root.freeLayout
+              Button {text:"To back";enabled:root.selected!==null;onClicked:root.moveLayer(false)}
+              Button {text:"To front";enabled:root.selected!==null;onClicked:root.moveLayer(true)}
+            }
             Button {text:"Remove block";Layout.fillWidth:true;enabled:root.selected!==null;onClicked:root.removeBlock()}
           }
           ColumnLayout {
             Layout.fillWidth:true;Layout.fillHeight:true
             RowLayout {
-              Caption {text:root.previewStale?"PAGE PREVIEW · NEEDS REFRESH":"PAGE PREVIEW"}
-              Button {text:"Refresh";enabled:!root.busy && root.doc!==null;onClicked:root.request("designPreview",{page:root.previewPage})}
+              Caption {text:root.freeLayout && !root.showPdf?"CANVAS · DRAG / RESIZE":root.previewStale?"PAGE PREVIEW · NEEDS REFRESH":"PAGE PREVIEW"}
+              Button {text:"Refresh";enabled:!root.busy && root.doc!==null;onClicked:root.request("designPreview",{page:root.freeLayout?root.canvasPage:root.previewPage})}
+            }
+            RowLayout {
+              visible:root.freeLayout;enabled:!root.busy
+              Button {text:root.showPdf?"Edit canvas":"Show PDF";enabled:root.showPdf || root.previewUrl!=="";onClicked:root.showPdf=!root.showPdf}
+              CheckBox {text:"Snap 8 pt";checked:root.snapToGrid;onToggled:root.snapToGrid=checked}
+              ComboBox {model:["Fit","150%","200%"];onActivated:function(index){root.canvasZoom=[1,1.5,2][index]}}
+              Button {text:"+ Page";enabled:root.doc && root.doc.pageCount<50;onClicked:root.addPage()}
             }
             Rectangle {
               Layout.fillWidth:true;Layout.fillHeight:true;color:Qt.rgba(0,0,0,0.18);radius:6
-              Image {anchors.fill:parent;anchors.margins:12;source:root.previewUrl;fillMode:Image.PreserveAspectFit;asynchronous:true;cache:false;visible:root.previewUrl!==""}
-              Label {anchors.centerIn:parent;width:parent.width-48;horizontalAlignment:Text.AlignHCenter;wrapMode:Text.Wrap;color:Color.popups.text;opacity:0.7;text:"Build your document with blocks.\n\nRefresh to see the rendered PDF here.";visible:root.previewUrl===""}
+              Image {anchors.fill:parent;anchors.margins:12;source:root.previewUrl;fillMode:Image.PreserveAspectFit;asynchronous:true;cache:false;visible:root.previewUrl!=="" && (!root.freeLayout || root.showPdf)}
+              Label {anchors.centerIn:parent;width:parent.width-48;horizontalAlignment:Text.AlignHCenter;wrapMode:Text.Wrap;color:Color.popups.text;opacity:0.7;text:"Build your document with blocks.\n\nRefresh to see the rendered PDF here.";visible:root.previewUrl==="" && (!root.freeLayout || root.showPdf)}
+              FreeCanvas {
+                id:freeCanvas;anchors.fill:parent;visible:root.freeLayout && !root.showPdf
+                enabled:!root.busy && root.confirmAction===""
+                document:root.freeLayout?root.doc:null;selectedIndex:root.selectedIndex;page:root.canvasPage
+                snap:root.snapToGrid;zoom:root.canvasZoom;assetBaseUrl:root.assetBaseUrl
+                onSelectBlock:function(index){root.selectedIndex=index}
+                onFrameCommitted:function(index,x,y,w,h){root.commitFrame(index,x,y,w,h)}
+                onNudge:function(dx,dy){root.nudge(dx,dy)}
+                onUndoRequested:function(redo){root.history(redo)}
+              }
             }
             RowLayout {
               Layout.alignment:Qt.AlignHCenter
-              Button {text:"Previous page";enabled:!root.busy && root.previewPage>1;onClicked:root.request("designPreview",{page:root.previewPage-1})}
-              Label {text:root.previewPage+" / "+root.previewPages;color:Color.popups.text}
-              Button {text:"Next page";enabled:!root.busy && root.previewPage<root.previewPages;onClicked:root.request("designPreview",{page:root.previewPage+1})}
+              Button {text:"Previous page";enabled:!root.busy && (root.freeLayout && !root.showPdf?root.canvasPage:root.previewPage)>1;onClicked:if(root.freeLayout && !root.showPdf){root.canvasPage--;root.selectedIndex=-1}else root.request("designPreview",{page:root.previewPage-1})}
+              Label {text:root.freeLayout && !root.showPdf?root.canvasPage+" / "+root.doc.pageCount:root.previewPage+" / "+root.previewPages;color:Color.popups.text}
+              Button {text:"Next page";enabled:!root.busy && (root.freeLayout && !root.showPdf?root.canvasPage<root.doc.pageCount:root.previewPage<root.previewPages);onClicked:if(root.freeLayout && !root.showPdf){root.canvasPage++;root.selectedIndex=-1}else root.request("designPreview",{page:root.previewPage+1})}
             }
           }
           ScrollView {
@@ -319,6 +410,9 @@ Item {
             ColumnLayout {
               width:parent.width;spacing:10;enabled:!root.busy && root.doc!==null
               Caption {text:"PAGE SETTINGS"}
+              ComboBox {Layout.fillWidth:true;model:["Flow layout","Free layout"];currentIndex:root.freeLayout?1:0;onActivated:function(index){root.setLayout(index===1)}}
+              Caption {visible:root.freeLayout;text:"Drag blocks or use X/Y below. Arrow keys nudge 1 pt; Shift moves 10 pt. Content is clipped to its frame. Refresh for exact PDF typography."}
+              Button {visible:root.freeLayout;text:"Remove empty page";onClicked:root.removeEmptyPage()}
               RowLayout {
                 ComboBox {Layout.fillWidth:true;model:["A4","Letter"];currentIndex:root.doc?model.indexOf(root.doc.page.size):0;onActivated:root.pageEdit("size",currentText)}
                 ComboBox {model:["portrait","landscape"];currentIndex:root.doc?model.indexOf(root.doc.page.orientation):0;onActivated:root.pageEdit("orientation",currentText)}
@@ -331,6 +425,23 @@ Item {
               Caption {text:root.selected?root.typeNames[root.types.indexOf(root.selected.type)].toUpperCase()+" PROPERTIES":"Select a block to edit it"}
               ColumnLayout {
                 Layout.fillWidth:true;visible:root.selected!==null
+                ColumnLayout {
+                  Layout.fillWidth:true;visible:root.freeLayout && root.selected!==null
+                  Caption {text:"FRAME · POINTS FROM PAGE TOP LEFT"}
+                  RowLayout {
+                    Caption {text:"X";Layout.fillWidth:false}
+                    SpinBox {from:0;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.x):0;onValueModified:root.frameEdit("x",value)}
+                    Caption {text:"Y";Layout.fillWidth:false}
+                    SpinBox {from:0;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.y):0;onValueModified:root.frameEdit("y",value)}
+                  }
+                  Caption {text:"Width / height"}
+                  RowLayout {
+                    SpinBox {from:24;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.width):24;onValueModified:root.frameEdit("width",value)}
+                    SpinBox {from:12;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.height):12;onValueModified:root.frameEdit("height",value)}
+                  }
+                  Caption {text:"Page"}
+                  SpinBox {from:1;to:root.freeLayout?root.doc.pageCount:1;value:root.selected && root.selected.frame?root.selected.frame.page:1;onValueModified:root.frameEdit("page",value)}
+                }
                 Caption {text:"Text";visible:root.selected && ["heading","text"].indexOf(root.selected.type)>=0}
                 CopyArea {visible:root.selected && ["heading","text"].indexOf(root.selected.type)>=0;text:root.selected?root.selected.text || "":"";onEdited:function(value){root.blockEdit("text",value)}}
                 Caption {text:"Left column";visible:root.selected && root.selected.type==="columns"}
@@ -341,8 +452,8 @@ Item {
                   Layout.fillWidth:true;visible:root.selected && root.selected.type==="image"
                   Button {text:root.selected && root.selected.asset?"Replace image…":"Import image…";onClicked:{root.importTarget=root.selected.id;imagePicker.open()}}
                   Caption {text:"PNG/JPEG · up to 4 MiB / 12 megapixels. Imported images are copied locally."}
-                  Caption {text:"Width (%)"}
-                  SpinBox {from:10;to:100;value:root.selected?root.selected.width || 100:100;onValueModified:root.blockEdit("width",value)}
+                  Caption {visible:!root.freeLayout;text:"Width (%)"}
+                  SpinBox {visible:!root.freeLayout;from:10;to:100;value:root.selected?root.selected.width || 100:100;onValueModified:root.blockEdit("width",value)}
                   Caption {text:"Description"}
                   Input {maximumLength:200;text:root.selected?root.selected.text || "":"";onTextEdited:root.blockEdit("text",text)}
                 }
@@ -366,14 +477,14 @@ Item {
                       Layout.fillWidth:true
                       Caption {text:"ROW "+(tableRow.index+1)}
                       Repeater {
-                        model:root.selected && root.selected.rows?root.selected.rows[tableRow.index].length:0
-                        delegate:Input {required property int index;maximumLength:300;text:root.selected && root.selected.rows?root.selected.rows[tableRow.index][index]:"";onTextEdited:root.tableCell(tableRow.index,index,text)}
+                        model:root.selected && root.selected.rows && root.selected.rows[tableRow.index]?root.selected.rows[tableRow.index].length:0
+                        delegate:Input {required property int index;maximumLength:300;text:root.selected && root.selected.rows && root.selected.rows[tableRow.index]?root.selected.rows[tableRow.index][index]:"";onTextEdited:root.tableCell(tableRow.index,index,text)}
                       }
                     }
                   }
                 }
-                Caption {text:"Height (pt)";visible:root.selected && ["image","spacer","divider"].indexOf(root.selected.type)>=0}
-                SpinBox {visible:root.selected && ["image","spacer","divider"].indexOf(root.selected.type)>=0;from:root.selected && root.selected.type==="image"?24:root.selected && root.selected.type==="divider"?1:4;to:root.selected && root.selected.type==="divider"?8:500;value:root.selected?root.selected.height || 24:24;onValueModified:root.blockEdit("height",value)}
+                Caption {text:"Height (pt)";visible:!root.freeLayout && root.selected && ["image","spacer","divider"].indexOf(root.selected.type)>=0}
+                SpinBox {visible:!root.freeLayout && root.selected && ["image","spacer","divider"].indexOf(root.selected.type)>=0;from:root.selected && root.selected.type==="image"?24:root.selected && root.selected.type==="divider"?1:4;to:root.selected && root.selected.type==="divider"?8:500;value:root.selected?root.selected.height || 24:24;onValueModified:root.blockEdit("height",value)}
                 ColumnLayout {
                   Layout.fillWidth:true;visible:root.selected && ["heading","text","columns","table"].indexOf(root.selected.type)>=0
                   Caption {text:"Font family"}
@@ -387,15 +498,15 @@ Item {
                 Input {visible:root.selected && ["image","spacer","pageBreak"].indexOf(root.selected.type)<0;maximumLength:7;text:root.selected?root.selected.color:"#18212b";onTextEdited:root.blockEdit("color",text)}
                 Caption {text:"Alignment";visible:root.selected && ["divider","spacer","pageBreak"].indexOf(root.selected.type)<0}
                 ComboBox {visible:root.selected && ["divider","spacer","pageBreak"].indexOf(root.selected.type)<0;Layout.fillWidth:true;model:["left","center","right"];currentIndex:root.selected?model.indexOf(root.selected.align):0;onActivated:root.blockEdit("align",currentText)}
-                Caption {text:"Space after block (pt)";visible:root.selected && root.selected.type!=="pageBreak"}
-                SpinBox {visible:root.selected && root.selected.type!=="pageBreak";from:0;to:60;value:root.selected?root.selected.spacing:12;onValueModified:root.blockEdit("spacing",value)}
+                Caption {text:"Space after block (pt)";visible:!root.freeLayout && root.selected && root.selected.type!=="pageBreak"}
+                SpinBox {visible:!root.freeLayout && root.selected && root.selected.type!=="pageBreak";from:0;to:60;value:root.selected?root.selected.spacing:12;onValueModified:root.blockEdit("spacing",value)}
               }
             }
           }
         }
         Label {Layout.fillWidth:true;text:root.status;textFormat:Text.PlainText;wrapMode:Text.Wrap;color:Color.popups.text}
         RowLayout {
-          Caption {text:"Local documents · Flow layout · Refresh preview after editing"}
+          Caption {text:root.freeLayout?"Local documents · Free layout · Refresh for the exact PDF":"Local documents · Flow layout · Refresh preview after editing"}
           Button {text:"Open PDF";visible:root.outputUrl!=="";onClicked:if(!Qt.openUrlExternally(root.outputUrl))root.status="Could not open the PDF. Check your default PDF viewer."}
           Button {text:"Export PDF";enabled:!root.busy && root.doc!==null;onClicked:root.request("designExport")}
         }

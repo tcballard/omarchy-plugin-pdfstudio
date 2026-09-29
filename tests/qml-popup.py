@@ -6,10 +6,11 @@ import os
 import pathlib
 import tempfile
 import sys
+import shutil
 
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 os.environ['QT_QUICK_BACKEND'] = 'software'
-from PySide6.QtCore import QUrl, QMetaObject, Q_ARG, QObject, Qt, qInstallMessageHandler
+from PySide6.QtCore import QUrl, QMetaObject, Q_ARG, QObject, Qt, qInstallMessageHandler, QPointF, QPoint
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlEngine, QQmlComponent
 from PySide6.QtQuick import QQuickWindow
@@ -22,6 +23,8 @@ root = pathlib.Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix='pdfstudio-qt-') as directory:
     fixture = pathlib.Path(directory)
     designer = '--designer' in sys.argv
+    (fixture / 'FreeCanvas.qml').write_text((root / 'FreeCanvas.qml').read_text())
+    shutil.copytree(root / 'renderer/fonts', fixture / 'renderer/fonts')
     source = (root / ('Designer.qml' if designer else 'InvoicePanel.qml')).read_text()
     # Keep all production controls, bindings and handlers. Replace only host
     # imports, window type and layer-shell attached properties.
@@ -73,15 +76,23 @@ QtObject {property bool waitForEnd:false;property string text:"";signal streamFi
     window.show()
     window.requestActivate()
     QTest.qWait(100)
+    def visual_item(item, name):
+        if item.objectName() == name:
+            return item
+        for child in item.childItems():
+            found = visual_item(child, name)
+            if found is not None:
+                return found
+        return None
     if designer:
         for kind in ['heading','text','columns','table','image','divider','spacer','pageBreak']:
             QMetaObject.invokeMethod(panel, 'addBlock', Q_ARG('QVariant', kind))
             QTest.qWait(20)
-        assert len(panel.property('doc').toVariant()['blocks']) == 8
+        assert len(panel.property('doc').toVariant()['blocks']) == 8, (panel.property('doc').toVariant(),messages)
         QMetaObject.invokeMethod(panel, 'history', Q_ARG('QVariant', False))
         assert len(panel.property('doc').toVariant()['blocks']) == 7
         QMetaObject.invokeMethod(panel, 'history', Q_ARG('QVariant', True))
-        assert len(panel.property('doc').toVariant()['blocks']) == 8
+        assert len(panel.property('doc').toVariant()['blocks']) == 8, (panel.property('doc').toVariant(),messages)
         panel.setProperty('selectedIndex', 1)
         QTest.qWait(20)
         # Real TextArea input must update the selected block without losing focus.
@@ -97,6 +108,54 @@ QtObject {property bool waitForEnd:false;property string text:"";signal streamFi
         QTest.qWait(20)
         QMetaObject.invokeMethod(panel, 'tableCell', Q_ARG('QVariant', 1), Q_ARG('QVariant', 1), Q_ARG('QVariant', 'Updated cell'))
         assert panel.property('doc').toVariant()['blocks'][3]['rows'][1][1] == 'Updated cell'
+        if '--free' in sys.argv:
+            QMetaObject.invokeMethod(panel, 'setLayout', Q_ARG('QVariant', True))
+            QTest.qWait(50)
+            # Only keep the first heading to give the pointer an unobstructed target.
+            d = panel.property('doc').toVariant()
+            d['blocks'] = d['blocks'][:1]
+            d['blocks'][0]['frame'] = dict(page=1,x=70,y=90,width=260,height=70)
+            QMetaObject.invokeMethod(panel, 'setDoc', Q_ARG('QVariant', d))
+            QTest.qWait(50)
+            box = visual_item(window.contentItem(), 'freeBlock-0')
+            assert box is not None and box.property('visible'), (panel.property('doc').toVariant(), [(o.objectName(),o.property('visible')) for o in panel.findChildren(QObject) if o.objectName().startswith('free')],messages)
+            origin = box.mapToScene(QPointF(30,30)).toPoint()
+            scale = box.mapToScene(QPointF(1,0)).x() - box.mapToScene(QPointF(0,0)).x()
+            QTest.mousePress(window, Qt.LeftButton, Qt.NoModifier, origin)
+            QTest.mouseMove(window, origin+QPoint(45,35), 30)
+            QTest.mouseRelease(window, Qt.LeftButton, Qt.NoModifier, origin+QPoint(45,35))
+            QTest.qWait(50)
+            moved = panel.property('doc').toVariant()['blocks'][0]['frame']
+            assert abs(moved['x']-70-45/scale)<2, moved
+            assert abs(moved['y']-90-35/scale)<2, moved
+            # A whole gesture is one undo operation.
+            QMetaObject.invokeMethod(panel, 'history', Q_ARG('QVariant', False))
+            assert panel.property('doc').toVariant()['blocks'][0]['frame']['x'] == 70
+            QMetaObject.invokeMethod(panel, 'history', Q_ARG('QVariant', True))
+            QTest.qWait(30)
+            handle = visual_item(window.contentItem(), 'resizeHandle-0')
+            point = handle.mapToScene(QPointF(handle.property('width')/2,handle.property('height')/2)).toPoint()
+            QTest.mousePress(window, Qt.LeftButton, Qt.NoModifier, point)
+            QTest.mouseMove(window, point+QPoint(40,30), 30)
+            QTest.mouseRelease(window, Qt.LeftButton, Qt.NoModifier, point+QPoint(40,30))
+            QTest.qWait(30)
+            resized = panel.property('doc').toVariant()['blocks'][0]['frame']
+            assert resized['width'] > moved['width']+20, resized
+            assert resized['height'] > moved['height']+20, resized
+            QTest.keyClick(window, Qt.Key_Right)
+            assert panel.property('doc').toVariant()['blocks'][0]['frame']['x'] == resized['x']+1
+            panel.setProperty('canvasZoom', 2)
+            panel.setProperty('snapToGrid', True)
+            QTest.qWait(30)
+            box = visual_item(window.contentItem(), 'freeBlock-0')
+            point = box.mapToScene(QPointF(20,20)).toPoint()
+            QTest.mousePress(window, Qt.LeftButton, Qt.NoModifier, point)
+            QTest.mouseMove(window, point+QPoint(18,17), 30)
+            QTest.mouseRelease(window, Qt.LeftButton, Qt.NoModifier, point+QPoint(18,17))
+            QTest.qWait(30)
+            snapped = panel.property('doc').toVariant()['blocks'][0]['frame']
+            assert snapped['x'] % 8 == 0 and snapped['y'] % 8 == 0, snapped
+            window.grabWindow().save('/tmp/pdfstudio-free-qt.png')
         window.grabWindow().save('/tmp/pdfstudio-designer-qt.png')
     panel.setProperty('confirmAction', 'close')
     QTest.qWait(30)

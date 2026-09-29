@@ -7,7 +7,7 @@ workspace. Source contract inspected against Omarchy quattro commit
 Passed:
 
 - `npm ci` with the committed lockfile and `.npmrc` settings.
-- `./tests/run`: manifest validation, strict TypeScript typecheck, twenty-seven Node tests
+- `./tests/run`: manifest validation, strict TypeScript typecheck, thirty-two Node tests
   covering decimal rounding, invalid input, draft number/revision/corruption rules,
   real PDF rendering, stdin helper new/save/list/preview from a different cwd,
   and the distributed renderer with no source, node_modules, npm or tsx available.
@@ -92,3 +92,25 @@ Save a template, use it twice, and verify each document remains independent.
 Test Save / Discard / Cancel when switching to Invoices and back, restore saved
 documents after a shell restart, and check the horizontal scroll on a small screen.
 Inline preview is optional; verify the external-viewer fallback without Poppler.
+
+Free-layout extension:
+
+- Three backend tests verify geometry bounds, finite coordinates and page IDs;
+  saved templates preserve geometry and layer order; real PDFs preserve absolute
+  text coordinates, blank pages, clipping and overlapping red/blue layers. Raster
+  pixels confirm content outside the text frame stays blank. A 40-row table in a
+  short frame does not create unintended pages.
+- Two editor-state tests cover conversion and undo, geometry clamping after page
+  changes, nudging, copying, page removal and selected layer ordering.
+- `python tests/qml-popup.py --designer --free` sends actual mouse press/move/release
+  events to move and resize a block, undoes/redoes the gesture, nudges by keyboard
+  and drags with zoom and snapping enabled. It also runs the modal keyboard checks.
+  The offscreen run emits no QML warnings. Quickshell/Wayland remain stubbed.
+- Free layout uses schema 2. Existing flow documents remain schema 1. Downgrading
+  to a designer without schema-2 support fails closed for the document collection.
+
+On-device follow-up: drag and resize with mouse/touchpad at fit and zoomed scales,
+scroll to page edges, check snapping, select overlapping layers, move blocks across
+pages, save/reopen a template, and compare Refresh against the exported PDF. Check
+that a host hide during a drag cancels the unfinished gesture without losing earlier
+edits. Canvas text is a Qt approximation; the rendered PDF is the export reference.
