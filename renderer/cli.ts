@@ -15,7 +15,8 @@ try {
     const r=JSON.parse(line);
     if(!r || typeof r!=='object' || Array.isArray(r) || typeof r.action!=='string') throw Error('Invalid request.');
     const store=new Store();let result;
-    switch(r.action) {
+    if(r.action.startsWith('design')) {const {designRequest}=await import('./design-cli');result=await designRequest(r);}
+    else switch(r.action) {
       case 'list':result=await store.list(r.offset ?? 0);break;
       case 'load':result={draft:await store.load(r.id)};break;
       case 'new':result={draft:fresh()};break;

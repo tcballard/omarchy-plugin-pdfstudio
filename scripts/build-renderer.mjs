@@ -22,6 +22,7 @@ try {
  await writeFile(join(out,'THIRD-PARTY-NOTICES.txt'),text);
  const sourcePaths=Object.keys(result.metafile.inputs).filter(p=>!p.startsWith('node_modules/'));
  sourcePaths.push('scripts/build-renderer.mjs','package.json','package-lock.json','tsconfig.json');
+ sourcePaths.push(...(await readdir(join(root,'renderer/fonts'))).map(name=>'renderer/fonts/'+name));
  const sources={};for(const p of [...new Set(sourcePaths)].sort()) sources[p]=hash(await readFile(join(root,p)));
  const assets={};for(const name of ['renderer.mjs','forme.cjs','forme_bg.wasm','THIRD-PARTY-NOTICES.txt']) {const bytes=await readFile(join(out,name));assets[name]={bytes:bytes.length,sha256:hash(bytes)};}
  await writeFile(join(out,'manifest.json'),JSON.stringify({schema:1,builder:'esbuild',builderVersion:esbuildVersion,target:'node22',sources,assets},null,2)+'\n');

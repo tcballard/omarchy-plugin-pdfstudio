@@ -6,7 +6,19 @@
   "sources": {
     "package-lock.json": "3758746bbafaa0ce1560b30f574793d79d4daee5d8fb0c184fae97c100729a61",
     "package.json": "eea723e8f7368c8c6d78e552d36e6b7be86b175902c0d206729c2f99a7a861a4",
-    "renderer/cli.ts": "bde4fd41d1b485d287e451c444cfded8f638e9526c61607364467483b01c579b",
+    "renderer/assets.ts": "780de2a2a4a19a32dd4879d333ab26dda335ec3642205eb6601fa33f27720096",
+    "renderer/cli.ts": "9fb3700024b12123983275eac63b4c5e54ceefc025be2a9bfb7a07f34adddb22",
+    "renderer/design-cli.ts": "5f96a1f1f80fae726dcf53093bad10cdefa3522d1145cd16da3982dad573fb05",
+    "renderer/design-render.tsx": "d80581d6bac8c59676b520b11b115eb0cefb09e0e144a474ed45cd4f6f07a0b3",
+    "renderer/design-store.ts": "20e2f05f5d184af72b596a78e78ae0ea0c93754f63a93572c5e281e7504cfeb2",
+    "renderer/document.ts": "4c0f5d4e4fb0050647856e7733e93da03a991e3545773f57671502f0acf18cd3",
+    "renderer/fonts/DejaVuSans-Bold.ttf": "5c1247acef7f2b8522a31742c76d6adcb5569bacc0be7ceaa4dc39dd252ce895",
+    "renderer/fonts/DejaVuSans.ttf": "ae7b7855e115a5966d8b1b3f80f254ccc117ec86f9965e202ee2940453837280",
+    "renderer/fonts/DejaVuSansMono-Bold.ttf": "3a3c502eeff669a231549e80df9f7c49de109bafe303170409e905d0b31a38fe",
+    "renderer/fonts/DejaVuSansMono.ttf": "c805f9436dbc268644c1d9584f01a601a653e028e08fd74b9b949f6cf8304d88",
+    "renderer/fonts/DejaVuSerif-Bold.ttf": "847b33e13925f19ff87e4d934d6b3cf7cac35ce16424f6f670e40c2f377cf2df",
+    "renderer/fonts/DejaVuSerif.ttf": "8f2c103bfa3fd5de71f1b92b18f21906b5a26871fb7e19a9a4c9af539c3cc7ab",
+    "renderer/fonts/LICENSE": "63d3ba759d12804c5b31a9d5940d855c1820d1f5999e6b0872eb1c7ff045fbc9",
     "renderer/invoice.tsx": "36d3b17ae72119dd509ac6ef4ddf381fa7057f4336a84bf25c7c5f62c33ae1ce",
     "renderer/io.ts": "e63af7605af8ee7323dbd67dc0c8101d0b60ec3613c9eb5d4f440db3dc9a0e24",
     "renderer/lock.ts": "016c7e5bb55193b465645403a513143a0e1144d98d8d55d3d6a057da590a8839",
@@ -19,13 +31,13 @@
     "renderer/vendor/registry/bases/forme/lib/resolve-color.ts": "6aa59803a5badf29289a0ffadceb73f78771724724822b120cd8286b3bb16852",
     "renderer/vendor/registry/themes/primitives.ts": "e533370ec298987cd80bcc2325272b5971e243dde6e8dd48bb30acf2f7c1186a",
     "renderer/vendor/registry/themes/professional.ts": "3fb2786b7553616ea2bab6e5e081336adcb178a095709f19f5bbf84c969ba16b",
-    "scripts/build-renderer.mjs": "63e2cb314c184dfaeb294fe09dcf898214a450f209377e5548f2430bb5d592d7",
+    "scripts/build-renderer.mjs": "60954ec3898dc510de99ee280a24172e349033d793e15acc4ef1aa9f39d1855d",
     "tsconfig.json": "17978a1b0d6b5b8689ca6873fbc949538708a7b4afa6be1e18a5d01654e9be4a"
   },
   "assets": {
     "renderer.mjs": {
-      "bytes": 188393,
-      "sha256": "825661aab949cd23aeee7b509172ecfaaf6825849b409c00b4b0d042a55ed317"
+      "bytes": 211870,
+      "sha256": "3b24fcc5ca67071e42f0a035792f3cc29406c8047fc7968c73ac44426cd59fb8"
     },
     "forme.cjs": {
       "bytes": 13408,

@@ -5,6 +5,7 @@ Run with PySide6-Essentials 6.8.3. This verifies popup shortcut scope, not host 
 import os
 import pathlib
 import tempfile
+import sys
 
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 os.environ['QT_QUICK_BACKEND'] = 'software'
@@ -20,7 +21,8 @@ qInstallMessageHandler(lambda kind, context, message: messages.append(message))
 root = pathlib.Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix='pdfstudio-qt-') as directory:
     fixture = pathlib.Path(directory)
-    source = (root / 'Panel.qml').read_text()
+    designer = '--designer' in sys.argv
+    source = (root / ('Designer.qml' if designer else 'InvoicePanel.qml')).read_text()
     # Keep all production controls, bindings and handlers. Replace only host
     # imports, window type and layer-shell attached properties.
     source = '\n'.join(line for line in source.splitlines()
@@ -28,9 +30,9 @@ with tempfile.TemporaryDirectory(prefix='pdfstudio-qt-') as directory:
                        and line != 'import qs.Commons'
                        and 'WlrLayershell.' not in line and 'exclusionMode:' not in line)
     source = source.replace('PanelWindow {', 'Window {')
-    source = source.replace('implicitWidth: Math.min', 'width: Math.min')
-    source = source.replace('implicitHeight: Math.min', 'height: Math.min')
-    (fixture / 'Panel.qml').write_text(source)
+    source = source.replace('implicitWidth:', 'width:')
+    source = source.replace('implicitHeight:', 'height:')
+    (fixture / 'InvoicePanel.qml').write_text(source)
     (fixture / 'qmldir').write_text('singleton Color 1.0 Color.qml\nsingleton Style 1.0 Style.qml\n')
     (fixture / 'Color.qml').write_text('''pragma Singleton
 import QtQuick
@@ -48,13 +50,16 @@ QtObject {
     (fixture / 'StdioCollector.qml').write_text('''import QtQuick
 QtObject {property bool waitForEnd:false;property string text:"";signal streamFinished()}''')
     engine = QQmlEngine()
-    component = QQmlComponent(engine, QUrl.fromLocalFile(str(fixture / 'Panel.qml')))
+    component = QQmlComponent(engine, QUrl.fromLocalFile(str(fixture / 'InvoicePanel.qml')))
     panel = component.create()
     assert panel is not None, [error.toString() for error in component.errors()]
     draft = dict(id='00000000-0000-4000-8000-000000000000', revision=1, number='INV-1',
                  date='2026-09-29', due='2026-09-29', company='Example', companyAddress='',
                  customer='Customer', customerAddress='', currency='GBP', taxRate='20',
                  payment='', notes='', items=[dict(description='Work', quantity='2.5', price='120.00')])
+    if designer:
+        draft = dict(schema=1,id=draft['id'],revision=0,title='Test document',template=False,
+                     page=dict(size='A4',orientation='portrait',margin=40,background='#ffffff'),blocks=[])
     QMetaObject.invokeMethod(panel, 'setDoc', Q_ARG('QVariant', draft))
     panel.setProperty('opened', True)
     panel.setProperty('dirty', True)
@@ -62,9 +67,37 @@ QtObject {property bool waitForEnd:false;property string text:"";signal streamFi
     # A native Window nested in a detached Item has no visible parent scene.
     # Quickshell owns its surface separately; detach our replacement likewise.
     window.setParent(None)
+    if designer:
+        window.setWidth(1280)
+        window.setHeight(850)
     window.show()
     window.requestActivate()
     QTest.qWait(100)
+    if designer:
+        for kind in ['heading','text','columns','table','image','divider','spacer','pageBreak']:
+            QMetaObject.invokeMethod(panel, 'addBlock', Q_ARG('QVariant', kind))
+            QTest.qWait(20)
+        assert len(panel.property('doc').toVariant()['blocks']) == 8
+        QMetaObject.invokeMethod(panel, 'history', Q_ARG('QVariant', False))
+        assert len(panel.property('doc').toVariant()['blocks']) == 7
+        QMetaObject.invokeMethod(panel, 'history', Q_ARG('QVariant', True))
+        assert len(panel.property('doc').toVariant()['blocks']) == 8
+        panel.setProperty('selectedIndex', 1)
+        QTest.qWait(20)
+        # Real TextArea input must update the selected block without losing focus.
+        area = next(obj for obj in panel.findChildren(QObject)
+                    if obj.metaObject().className().startswith('TextArea') and obj.property('visible'))
+        QMetaObject.invokeMethod(area, 'forceActiveFocus')
+        QTest.keyClick(window, Qt.Key_A, Qt.ControlModifier)
+
+        for letter in 'free design':
+            QTest.keyClick(window, Qt.Key(ord(letter.upper())))
+        assert panel.property('doc').toVariant()['blocks'][1]['text'] == 'free design'
+        panel.setProperty('selectedIndex', 3)
+        QTest.qWait(20)
+        QMetaObject.invokeMethod(panel, 'tableCell', Q_ARG('QVariant', 1), Q_ARG('QVariant', 1), Q_ARG('QVariant', 'Updated cell'))
+        assert panel.property('doc').toVariant()['blocks'][3]['rows'][1][1] == 'Updated cell'
+        window.grabWindow().save('/tmp/pdfstudio-designer-qt.png')
     panel.setProperty('confirmAction', 'close')
     QTest.qWait(30)
     popup = next(obj for obj in panel.findChildren(QObject)
@@ -81,7 +114,7 @@ QtObject {property bool waitForEnd:false;property string text:"";signal streamFi
     QTest.qWait(30)
     assert panel.property('confirmAction') == '', 'Escape did not cancel the popup'
     assert panel.property('opened') and panel.property('dirty'), 'Cancel changed or closed the draft'
-    assert panel.property('doc').toVariant()['number'] == draft['number']
+    assert panel.property('doc').toVariant()['id'] == draft['id']
     assert not messages, messages
     window.close()
     print('PASS: Qt popup takes focus, contains Tab, blocks Ctrl+S and cancels on Escape')
