@@ -7,7 +7,7 @@ import {fresh} from '../renderer/model';
 
 // Execute the actual root-level JavaScript functions in Panel.qml. Only the
 // Process, Timer and ListModel interfaces are stubbed; no copied state logic.
-const qml=readFileSync(new URL('../Panel.qml',import.meta.url),'utf8');
+const qml=readFileSync(new URL('../InvoicePanel.qml',import.meta.url),'utf8');
 const functions=[...qml.matchAll(/^  function /gm)].map(match=>{
  const source=ts.createSourceFile('panel.js',qml.slice(match.index),ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
  assert.ok(ts.isFunctionDeclaration(source.statements[0]));

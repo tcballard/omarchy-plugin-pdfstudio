@@ -7,7 +7,7 @@ workspace. Source contract inspected against Omarchy quattro commit
 Passed:
 
 - `npm ci` with the committed lockfile and `.npmrc` settings.
-- `./tests/run`: manifest validation, strict TypeScript typecheck, nineteen Node tests
+- `./tests/run`: manifest validation, strict TypeScript typecheck, twenty-seven Node tests
   covering decimal rounding, invalid input, draft number/revision/corruption rules,
   real PDF rendering, stdin helper new/save/list/preview from a different cwd,
   and the distributed renderer with no source, node_modules, npm or tsx available.
@@ -16,7 +16,7 @@ Passed:
   storage size/count limits without data replacement, editing at the count limit,
   concurrent writers, old empty lock files and SIGKILL recovery.
   The follow-up pass adds response byte/error caps, encoded PDF file URLs, and
-  execution of the actual Panel.qml JavaScript functions with stubbed Process,
+  execution of the actual InvoicePanel.qml JavaScript functions with stubbed Process,
   Timer and ListModel interfaces. Panel regressions cover both completion orders,
   nonzero/crashed exits, malformed and incomplete replies, timeout/late output,
   queued-action serialization, failed discard-and-load, host hide during save,
@@ -38,6 +38,28 @@ Passed:
 - Fictional three-line invoice: exported PDF text and rendered page visually
   inspected. Embedded DejaVu fonts corrected the original standard-font spacing.
 - 31-line document: seven pages; `pdftotext` retains every item and GBP 836.63 total.
+
+Designer extension checks:
+
+- Four backend tests cover all starting templates, schema/content limits,
+  unsafe image references, revision conflicts, template copies, separate invoice
+  storage, locks/corruption, local image copies and changed asset detection.
+- The shipped designer runs in a temporary directory with only `dist/` and fonts,
+  without node_modules or source. It saves/reopens templates and renders all eight
+  block types with sans/serif/mono fonts. Poppler verifies two-page pagination,
+  text from both columns and the table, and the requested second-page PNG.
+- Four additional state tests execute Designer.qml functions: coalesced undo,
+  reordering, undo after save, helper completion ordering, failed replacement,
+  crash/timeout handling, save-before-switch, host hide and undoable image import.
+- `python tests/qml-popup.py --designer` creates all eight blocks using the actual
+  Qt controls, types into a TextArea, edits a table cell, exercises undo/redo and
+  repeats the popup keyboard checks. No QML warnings remain. This caught and
+  fixed a selected-block binding loop. Host imports, Process and the window
+  surface are stubbed; this is not a screenshot or test of Omarchy itself.
+- A fictional landscape brochure was rendered and visually inspected for serif
+  typography, margins, colour and two-column flow.
+- CI installs Poppler for the portable preview tests. Six bundled font files and
+  their licence are included in the reproducible build's source hashes.
 
 Not run: Omarchy's installed validator, live discovery/enablement, actual panel
 controls, focus, Escape/close, repeated summon/hide, multi-monitor placement,
@@ -63,3 +85,10 @@ screenshot only after those checks; preview.png is exported PDF output.
 
 This development source is published in `tcballard/omarchy-plugin-pdfstudio`.
 No release or marketplace submission has been performed.
+
+For the designer's live test, import a local PNG and JPEG through the native file
+picker, edit and reorder blocks, refresh each page, export and compare the PDF.
+Save a template, use it twice, and verify each document remains independent.
+Test Save / Discard / Cancel when switching to Invoices and back, restore saved
+documents after a shell restart, and check the horizontal scroll on a small screen.
+Inline preview is optional; verify the external-viewer fallback without Poppler.

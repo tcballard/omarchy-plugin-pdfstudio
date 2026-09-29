@@ -41,6 +41,63 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
+// renderer/io.ts
+import { open } from "node:fs/promises";
+import { constants } from "node:fs";
+async function requestLine(input) {
+  const chunks = [];
+  let size = 0;
+  for await (const value of input) {
+    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    const newline = chunk.indexOf(10);
+    const part = newline < 0 ? chunk : chunk.subarray(0, newline);
+    size += part.length;
+    if (size > MAX_REQUEST_BYTES) throw Error("Request is too large.");
+    chunks.push(part);
+    if (newline >= 0) return Buffer.concat(chunks, size).toString("utf8");
+  }
+  if (!size) throw Error("No request received.");
+  return Buffer.concat(chunks, size).toString("utf8");
+}
+async function readBounded(path, limit) {
+  const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    const info = await file.stat();
+    if (!info.isFile() || info.size > limit) throw Error("Draft storage exceeds the supported size or is not a regular file.");
+    const chunks = [];
+    let size = 0;
+    while (true) {
+      const buffer = Buffer.alloc(Math.min(65536, limit + 1 - size));
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, null);
+      if (!bytesRead) break;
+      size += bytesRead;
+      if (size > limit) throw Error("Draft storage exceeds the supported size.");
+      chunks.push(buffer.subarray(0, bytesRead));
+    }
+    return Buffer.concat(chunks, size).toString("utf8");
+  } finally {
+    await file.close();
+  }
+}
+function errorReply(error) {
+  return { ok: false, error: String(error || "Operation failed.").slice(0, 1024) };
+}
+function encodeReply(value) {
+  const json = JSON.stringify(value);
+  if (Buffer.byteLength(json) > MAX_REQUEST_BYTES) throw Error("Renderer response is too large.");
+  return json + "\n";
+}
+function reply(value) {
+  process.stdout.write(encodeReply(value));
+}
+var MAX_REQUEST_BYTES;
+var init_io = __esm({
+  "renderer/io.ts"() {
+    "use strict";
+    MAX_REQUEST_BYTES = 256 * 1024;
+  }
+});
+
 // renderer/model.ts
 import { randomUUID } from "node:crypto";
 function fresh() {
@@ -102,6 +159,361 @@ function money(value, currency) {
 var init_model = __esm({
   "renderer/model.ts"() {
     "use strict";
+  }
+});
+
+// renderer/lock.ts
+import { open as open2 } from "node:fs/promises";
+import { spawn } from "node:child_process";
+async function acquireLock(path) {
+  const file = await open2(path, "a", 384);
+  await file.close();
+  const child = spawn("/usr/bin/flock", [
+    "--exclusive",
+    "--nonblock",
+    path,
+    process.execPath,
+    "-e",
+    "process.stdin.resume();process.stdout.write('locked\\n');"
+  ], { stdio: ["pipe", "pipe", "ignore"] });
+  let failure;
+  child.stdin.on("error", () => {
+  });
+  const exited = new Promise((resolve2) => {
+    child.once("error", (e) => {
+      failure = e;
+      resolve2();
+    });
+    child.once("exit", () => resolve2());
+  });
+  try {
+    await new Promise((resolve2, reject) => {
+      child.stdout.once("data", () => resolve2());
+      void exited.then(() => reject(failure || Error("Draft storage is locked. Another save may be running; retry shortly.")));
+    });
+  } catch (e) {
+    child.stdin.end();
+    await exited;
+    throw e;
+  }
+  return async () => {
+    child.stdin.end();
+    await exited;
+  };
+}
+var init_lock = __esm({
+  "renderer/lock.ts"() {
+    "use strict";
+  }
+});
+
+// renderer/document.ts
+import { randomUUID as randomUUID3 } from "node:crypto";
+function block(type) {
+  const b = { id: randomUUID3(), type, font: "sans", size: type === "heading" ? 26 : 11, bold: type === "heading", color: "#18212b", align: "left", spacing: 12 };
+  if (type === "heading" || type === "text") b.text = type === "heading" ? "Your heading" : "Write your text here.";
+  if (type === "columns") {
+    b.left = "Left column";
+    b.right = "Right column";
+  }
+  if (type === "table") {
+    b.rows = [["Item", "Details"], ["First item", "Description"]];
+    b.header = true;
+  }
+  if (type === "image") {
+    b.asset = "";
+    b.width = 100;
+    b.height = 180;
+    b.text = "";
+  }
+  if (type === "divider" || type === "spacer") b.height = type === "divider" ? 1 : 24;
+  return b;
+}
+function newDesign(preset = "blank") {
+  const d = { schema: 1, id: randomUUID3(), revision: 0, title: "Untitled document", template: false, page: { size: "A4", orientation: "portrait", margin: 40, background: "#ffffff" }, blocks: [] };
+  if (preset === "letter") {
+    d.title = "Letter";
+    d.blocks = [{ ...block("heading"), text: "Your name" }, { ...block("text"), text: "Your address\nDate" }, { ...block("text"), text: "Dear recipient,\n\nWrite your letter here.\n\nYours sincerely,\nYour name" }];
+  } else if (preset === "report") {
+    d.title = "Report";
+    d.blocks = [{ ...block("heading"), text: "Report title" }, { ...block("text"), text: "Prepared by your team" }, { ...block("divider") }, { ...block("heading"), size: 18, text: "Summary" }, block("text"), block("table")];
+  } else if (preset === "brochure") {
+    d.title = "Brochure";
+    d.page.orientation = "landscape";
+    d.blocks = [{ ...block("heading"), size: 36, text: "Your next big idea" }, block("text"), block("columns")];
+  } else if (preset !== "blank") throw Error("Unknown starting template.");
+  return d;
+}
+function text(v, max, label) {
+  if (typeof v !== "string" || v.length > max) throw Error(`${label} must be at most ${max} characters.`);
+  return v;
+}
+function num(v, min, max, label) {
+  if (typeof v !== "number" || !Number.isFinite(v) || v < min || v > max) throw Error(`Invalid ${label}.`);
+  return v;
+}
+function color(v) {
+  if (typeof v !== "string" || !/^#[0-9a-f]{6}$/i.test(v)) throw Error("Use a colour such as #18212b.");
+  return v;
+}
+function choice(v, options, label) {
+  if (!options.includes(v)) throw Error(`Invalid ${label}.`);
+  return v;
+}
+function validateDesign(input, complete = false) {
+  const d = input;
+  if (!d || d.schema !== 1 || typeof d.id !== "string" || !UUID.test(d.id) || !Number.isSafeInteger(d.revision) || d.revision < 0 || typeof d.template !== "boolean") throw Error("Invalid document identity.");
+  if (!d.page || !Array.isArray(d.blocks) || d.blocks.length > 80) throw Error("Use at most 80 blocks.");
+  const title = text(d.title, 100, "Document title");
+  if (!title.trim()) throw Error("Give the document a title.");
+  const page = { size: choice(d.page.size, ["A4", "Letter"], "page size"), orientation: choice(d.page.orientation, ["portrait", "landscape"], "orientation"), margin: num(d.page.margin, 16, 100, "page margin"), background: color(d.page.background) };
+  const blocks = d.blocks.map((b) => {
+    if (!b || typeof b.id !== "string" || !UUID.test(b.id)) throw Error("Invalid block identity.");
+    const type = choice(b.type, BLOCK_TYPES, "block type");
+    if (typeof b.bold !== "boolean") throw Error("Invalid font weight.");
+    const out = { id: b.id, type, font: choice(b.font, ["sans", "serif", "mono"], "font"), size: num(b.size, 8, 48, "font size"), bold: b.bold, color: color(b.color), align: choice(b.align, ["left", "center", "right"], "alignment"), spacing: num(b.spacing, 0, 60, "block spacing") };
+    if (type === "heading" || type === "text") out.text = text(b.text, 4e3, "Block text");
+    if (type === "columns") {
+      out.left = text(b.left, 4e3, "Left column");
+      out.right = text(b.right, 4e3, "Right column");
+    }
+    if (type === "image") {
+      out.asset = text(b.asset, 68, "Image");
+      if (out.asset && !ASSET.test(out.asset)) throw Error("Choose an imported PNG or JPEG image.");
+      if (complete && !out.asset) throw Error("Import an image or remove the empty image block.");
+      out.width = num(b.width, 10, 100, "image width");
+      out.height = num(b.height, 24, 500, "image height");
+      out.text = text(b.text, 200, "Image description");
+    }
+    if (type === "divider" || type === "spacer") out.height = num(b.height, type === "divider" ? 1 : 4, type === "divider" ? 8 : 500, "block height");
+    if (type === "table") {
+      if (typeof b.header !== "boolean" || !Array.isArray(b.rows) || b.rows.length < 1 || b.rows.length > 40) throw Error("Tables support 1 to 40 rows.");
+      const width = Array.isArray(b.rows[0]) ? b.rows[0].length : 0;
+      if (width < 1 || width > 6) throw Error("Tables support 1 to 6 columns.");
+      out.rows = b.rows.map((row) => {
+        if (!Array.isArray(row) || row.length !== width) throw Error("Each table row must have the same number of cells.");
+        return row.map((cell) => text(cell, 300, "Table cell"));
+      });
+      out.header = b.header;
+    }
+    return out;
+  });
+  if (new Set(blocks.map((b) => b.id)).size !== blocks.length) throw Error("Duplicate block identities.");
+  if (blocks.filter((b) => b.type === "image").length > 8) throw Error("Use at most 8 images.");
+  const result = { schema: 1, id: d.id, revision: d.revision, title, template: d.template, page, blocks };
+  if (Buffer.byteLength(JSON.stringify(result)) > 128 * 1024) throw Error("Document exceeds the 128 KiB content limit. Shorten some text or tables.");
+  return result;
+}
+var BLOCK_TYPES, UUID, ASSET;
+var init_document = __esm({
+  "renderer/document.ts"() {
+    "use strict";
+    BLOCK_TYPES = ["heading", "text", "image", "table", "divider", "spacer", "columns", "pageBreak"];
+    UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    ASSET = /^[0-9a-f]{64}\.(png|jpg)$/;
+  }
+});
+
+// renderer/design-store.ts
+import { mkdir as mkdir2, open as open4, rename as rename2, unlink as unlink2 } from "node:fs/promises";
+import { join as join2 } from "node:path";
+import { homedir as homedir2 } from "node:os";
+import { randomUUID as randomUUID4 } from "node:crypto";
+var DesignStore;
+var init_design_store = __esm({
+  "renderer/design-store.ts"() {
+    "use strict";
+    init_document();
+    init_io();
+    init_lock();
+    DesignStore = class {
+      constructor(directory = join2(process.env.XDG_DATA_HOME || join2(homedir2(), ".local/share"), "omarchy-pdf-studio")) {
+        this.directory = directory;
+      }
+      directory;
+      async read() {
+        try {
+          const s = JSON.parse(await readBounded(join2(this.directory, "designs.json"), 16 * 1024 * 1024));
+          if (!s || s.schema !== 1 || !Array.isArray(s.documents) || s.documents.length > 128) throw Error("Invalid document collection.");
+          const docs = s.documents.map((d) => validateDesign(d));
+          if (new Set(docs.map((d) => d.id)).size !== docs.length) throw Error("Duplicate document identities.");
+          return docs;
+        } catch (e) {
+          if (e.code === "ENOENT") return [];
+          throw Error("Cannot read documents. Existing data has not been overwritten. " + e.message);
+        }
+      }
+      async list(template = false, offset = 0) {
+        if (typeof template !== "boolean" || typeof offset !== "number" || !Number.isInteger(offset) || offset < 0 || offset > 100 || offset % 50 !== 0) throw Error("Invalid document page.");
+        const docs = (await this.read()).filter((d) => d.template === template);
+        return { entries: docs.slice(offset, offset + 50).map(({ id, title, revision }) => ({ id, title, revision })), offset, total: docs.length };
+      }
+      async load(id) {
+        if (typeof id !== "string" || !UUID.test(id)) throw Error("Invalid document ID.");
+        const d = (await this.read()).find((d2) => d2.id === id);
+        if (!d) throw Error("Document no longer exists.");
+        return d;
+      }
+      async save(input) {
+        const d = validateDesign(input);
+        await mkdir2(this.directory, { recursive: true, mode: 448 });
+        const release = await acquireLock(join2(this.directory, "designs.lock"));
+        try {
+          const docs = await this.read(), index = docs.findIndex((x) => x.id === d.id);
+          if (index < 0 && d.revision !== 0 || index >= 0 && docs[index].revision !== d.revision) throw Error("Document changed elsewhere. Reopen it before editing.");
+          if (index < 0 && docs.length >= 128) throw Error("The library supports 128 documents and templates.");
+          if (d.revision >= Number.MAX_SAFE_INTEGER) throw Error("Document revision limit reached.");
+          d.revision++;
+          if (index < 0) docs.unshift(d);
+          else docs[index] = d;
+          const json = JSON.stringify({ schema: 1, documents: docs });
+          if (Buffer.byteLength(json) > 16 * 1024 * 1024) throw Error("Document library exceeds 16 MiB.");
+          const temp = join2(this.directory, `.designs-${randomUUID4()}.tmp`);
+          try {
+            const file = await open4(temp, "wx", 384);
+            try {
+              await file.writeFile(json);
+              await file.sync();
+            } finally {
+              await file.close();
+            }
+            await rename2(temp, join2(this.directory, "designs.json"));
+            const dir = await open4(this.directory);
+            try {
+              await dir.sync();
+            } finally {
+              await dir.close();
+            }
+          } finally {
+            await unlink2(temp).catch(() => {
+            });
+          }
+          return d;
+        } finally {
+          await release();
+        }
+      }
+      async template(input) {
+        const d = validateDesign(input);
+        return this.save({ ...d, id: randomUUID4(), revision: 0, template: true });
+      }
+      async useTemplate(id) {
+        const d = await this.load(id);
+        if (!d.template) throw Error("Select a template.");
+        return { ...d, id: randomUUID4(), revision: 0, template: false };
+      }
+    };
+  }
+});
+
+// renderer/assets.ts
+import { open as open5, mkdir as mkdir3, readdir, stat, rename as rename3, unlink as unlink3 } from "node:fs/promises";
+import { constants as constants2 } from "node:fs";
+import { join as join3, isAbsolute } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createHash, randomUUID as randomUUID5 } from "node:crypto";
+async function bytes(path) {
+  const f = await open5(path, constants2.O_RDONLY | constants2.O_NONBLOCK | constants2.O_NOFOLLOW);
+  try {
+    const s = await f.stat();
+    if (!s.isFile() || s.size > MAX_IMAGE) throw Error("Choose a regular PNG/JPEG file smaller than 4 MiB.");
+    const buffer = Buffer.alloc(MAX_IMAGE + 1);
+    let size = 0;
+    while (size < buffer.length) {
+      const r = await f.read(buffer, size, buffer.length - size, null);
+      if (!r.bytesRead) break;
+      size += r.bytesRead;
+    }
+    if (size > MAX_IMAGE) throw Error("Image exceeds 4 MiB.");
+    return buffer.subarray(0, size);
+  } finally {
+    await f.close();
+  }
+}
+function imageInfo(b) {
+  let width = 0, height = 0, extension = "";
+  if (b.length >= 33 && b.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) && b.toString("ascii", 12, 16) === "IHDR") {
+    width = b.readUInt32BE(16);
+    height = b.readUInt32BE(20);
+    extension = "png";
+  } else if (b.length > 4 && b[0] === 255 && b[1] === 216) {
+    let pos = 2;
+    while (pos + 4 <= b.length) {
+      if (b[pos++] !== 255) break;
+      while (b[pos] === 255) pos++;
+      const marker = b[pos++];
+      if (marker === 218 || marker === 217) break;
+      if (marker === 1 || marker >= 208 && marker <= 215) continue;
+      if (pos + 2 > b.length) break;
+      const length = b.readUInt16BE(pos);
+      if (length < 2 || pos + length > b.length) break;
+      if ([192, 193, 194].includes(marker) && length >= 8) {
+        height = b.readUInt16BE(pos + 3);
+        width = b.readUInt16BE(pos + 5);
+        extension = "jpg";
+        break;
+      }
+      pos += length;
+    }
+  }
+  if (!extension || width < 1 || height < 1 || width > 8e3 || height > 8e3 || width * height > 12e6) throw Error("Use a PNG/JPEG image up to 12 megapixels (8,000 pixels per side).");
+  return { width, height, extension };
+}
+async function importImage(directory, input) {
+  if (typeof input !== "string" || input.length > 4096) throw Error("Choose a local image.");
+  const path = input.startsWith("file:") ? fileURLToPath(input) : input;
+  if (!isAbsolute(path)) throw Error("Choose a local image with an absolute path.");
+  const data = await bytes(path), info = imageInfo(data), asset = createHash("sha256").update(data).digest("hex") + "." + info.extension;
+  const dir = join3(directory, "assets");
+  await mkdir3(dir, { recursive: true, mode: 448 });
+  const release = await acquireLock(join3(directory, "assets.lock"));
+  try {
+    const names = (await readdir(dir)).filter((name) => ASSET.test(name));
+    if (!names.includes(asset)) {
+      if (names.length >= 128) throw Error("The image library supports 128 imported images.");
+      let total = 0;
+      for (const name of names) if (ASSET.test(name)) total += (await stat(join3(dir, name))).size;
+      if (total + data.length > 128 * 1024 * 1024) throw Error("The image library exceeds 128 MiB.");
+    }
+    const temporary = join3(dir, `.image-${randomUUID5()}.tmp`);
+    try {
+      const file = await open5(temporary, "wx", 384);
+      try {
+        await file.writeFile(data);
+        await file.sync();
+      } finally {
+        await file.close();
+      }
+      await rename3(temporary, join3(dir, asset));
+      const folder = await open5(dir);
+      try {
+        await folder.sync();
+      } finally {
+        await folder.close();
+      }
+    } finally {
+      await unlink3(temporary).catch(() => {
+      });
+    }
+    return { asset, ...info };
+  } finally {
+    await release();
+  }
+}
+async function imageData(directory, asset) {
+  if (!ASSET.test(asset)) throw Error("Invalid image reference.");
+  const data = await bytes(join3(directory, "assets", asset));
+  const info = imageInfo(data);
+  if (createHash("sha256").update(data).digest("hex") + "." + info.extension !== asset) throw Error("Imported image has changed. Import it again.");
+  return { src: `data:image/${info.extension === "jpg" ? "jpeg" : "png"};base64,${data.toString("base64")}`, ...info };
+}
+var MAX_IMAGE;
+var init_assets = __esm({
+  "renderer/assets.ts"() {
+    "use strict";
+    init_document();
+    init_lock();
+    MAX_IMAGE = 4 * 1024 * 1024;
   }
 });
 
@@ -968,9 +1380,9 @@ function mapGridTrack(track) {
     const frMatch = track.match(/^([0-9.]+)fr$/);
     if (frMatch)
       return { Fr: parseFloat(frMatch[1]) };
-    const num = parseFloat(track);
-    if (!isNaN(num))
-      return { Pt: num };
+    const num2 = parseFloat(track);
+    if (!isNaN(num2))
+      return { Pt: num2 };
     return "Auto";
   }
   if (typeof track === "object" && "min" in track && "max" in track) {
@@ -994,9 +1406,9 @@ function parseGridTemplate(value) {
     const frMatch = token.match(/^([0-9.]+)fr$/);
     if (frMatch)
       return { Fr: parseFloat(frMatch[1]) };
-    const num = parseFloat(token);
-    if (!isNaN(num))
-      return { Pt: num };
+    const num2 = parseFloat(token);
+    if (!isNaN(num2))
+      return { Pt: num2 };
     return "Auto";
   });
 }
@@ -1010,9 +1422,9 @@ function mapDimension(val) {
   if (match) {
     return { Percent: parseFloat(match[1]) };
   }
-  const num = parseFloat(val);
-  if (!isNaN(num)) {
-    return { Pt: num };
+  const num2 = parseFloat(val);
+  if (!isNaN(num2)) {
+    return { Pt: num2 };
   }
   return "Auto";
 }
@@ -1229,8 +1641,8 @@ function parseBoxShadow(val) {
   const blur = parseFloat(tokens[2]);
   if (Number.isNaN(offsetX) || Number.isNaN(offsetY) || Number.isNaN(blur))
     return null;
-  const color = parseColor(tokens[3]);
-  return { offsetX, offsetY, blur, color };
+  const color2 = parseColor(tokens[3]);
+  return { offsetX, offsetY, blur, color: color2 };
 }
 function parseBackground(val) {
   const s = val.trim();
@@ -1358,9 +1770,9 @@ function parseGradientStops(parts) {
       positions[i] = p0 + (p1 - p0) * (i - prev) / (next - prev);
     }
   }
-  return colors.map((color, i) => ({
+  return colors.map((color2, i) => ({
     position: Math.max(0, Math.min(1, positions[i])),
-    color
+    color: color2
   }));
 }
 function splitColorAndPosition(s) {
@@ -1412,19 +1824,19 @@ function parseCSSEdges(val) {
 function parseBorderString(val) {
   const tokens = val.trim().split(/\s+/);
   let width;
-  let color;
+  let color2;
   for (const token of tokens) {
     const lower = token.toLowerCase();
     if (BORDER_STYLE_KEYWORDS.has(lower))
       continue;
-    const num = parseFloat(lower.replace(/px$/i, ""));
-    if (!isNaN(num) && /^[\d.]/.test(lower)) {
-      width = num;
+    const num2 = parseFloat(lower.replace(/px$/i, ""));
+    if (!isNaN(num2) && /^[\d.]/.test(lower)) {
+      width = num2;
     } else {
-      color = parseColor(token);
+      color2 = parseColor(token);
     }
   }
-  return { width, color };
+  return { width, color: color2 };
 }
 function expandEdges(val) {
   if (typeof val === "number") {
@@ -1687,8 +2099,8 @@ function recordCanvasOperations(draw) {
     setLineCap(cap) {
       operations.push({ op: "SetLineCap", cap });
     },
-    setLineJoin(join3) {
-      operations.push({ op: "SetLineJoin", join: join3 });
+    setLineJoin(join6) {
+      operations.push({ op: "SetLineJoin", join: join6 });
     },
     save() {
       operations.push({ op: "Save" });
@@ -3728,11 +4140,11 @@ function svgChildrenToString(children) {
       const name = svgCamelToKebab[k] ?? k;
       return `${name}="${escapeXmlAttr(String(v))}"`;
     }).join(" ");
-    const open4 = attrStr ? `<${tag} ${attrStr}` : `<${tag}`;
+    const open6 = attrStr ? `<${tag} ${attrStr}` : `<${tag}`;
     if (nested) {
-      result += `${open4}>${svgChildrenToString(nested)}</${tag}>`;
+      result += `${open6}>${svgChildrenToString(nested)}</${tag}>`;
     } else {
-      result += `${open4}/>`;
+      result += `${open6}/>`;
     }
   });
   return result;
@@ -4079,13 +4491,13 @@ var init_result = __esm({
 
 // node_modules/@formepdf/core/dist/attachments.js
 function toBase64(data) {
-  const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
+  const bytes2 = typeof data === "string" ? new TextEncoder().encode(data) : data;
   const B = globalThis.Buffer;
   if (B)
-    return B.from(bytes).toString("base64");
+    return B.from(bytes2).toString("base64");
   let bin = "";
-  for (let i = 0; i < bytes.length; i += 32768) {
-    bin += String.fromCharCode(...bytes.subarray(i, i + 32768));
+  for (let i = 0; i < bytes2.length; i += 32768) {
+    bin += String.fromCharCode(...bytes2.subarray(i, i + 32768));
   }
   return btoa(bin);
 }
@@ -4138,19 +4550,19 @@ var init_extract = __esm({
 import { render_pdf as wasmRenderPdf } from "./forme.cjs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-function uint8ArrayToBase64(bytes) {
-  return Buffer.from(bytes).toString("base64");
+function uint8ArrayToBase64(bytes2) {
+  return Buffer.from(bytes2).toString("base64");
 }
 async function resolveFonts(doc) {
-  const fonts2 = doc.fonts;
-  if (!fonts2?.length)
+  const fonts3 = doc.fonts;
+  if (!fonts3?.length)
     return;
-  for (const font of fonts2) {
+  for (const font of fonts3) {
     if (font.src instanceof Uint8Array) {
       font.src = uint8ArrayToBase64(font.src);
     } else if (typeof font.src === "string" && !font.src.startsWith("data:")) {
-      const bytes = await readFile(resolve(font.src));
-      font.src = uint8ArrayToBase64(new Uint8Array(bytes));
+      const bytes2 = await readFile(resolve(font.src));
+      font.src = uint8ArrayToBase64(new Uint8Array(bytes2));
     }
   }
 }
@@ -4202,6 +4614,178 @@ var init_dist4 = __esm({
     init_result();
     init_attachments();
     init_extract();
+  }
+});
+
+// node_modules/react/cjs/react-jsx-runtime.production.js
+var require_react_jsx_runtime_production = __commonJS({
+  "node_modules/react/cjs/react-jsx-runtime.production.js"(exports) {
+    "use strict";
+    /**
+     * @license React
+     * react-jsx-runtime.production.js
+     *
+     * Copyright (c) Meta Platforms, Inc. and affiliates.
+     *
+     * This source code is licensed under the MIT license found in the
+     * LICENSE file in the root directory of this source tree.
+     */
+    var REACT_ELEMENT_TYPE = /* @__PURE__ */ Symbol.for("react.transitional.element");
+    var REACT_FRAGMENT_TYPE = /* @__PURE__ */ Symbol.for("react.fragment");
+    function jsxProd(type, config, maybeKey) {
+      var key = null;
+      void 0 !== maybeKey && (key = "" + maybeKey);
+      void 0 !== config.key && (key = "" + config.key);
+      if ("key" in config) {
+        maybeKey = {};
+        for (var propName in config)
+          "key" !== propName && (maybeKey[propName] = config[propName]);
+      } else maybeKey = config;
+      config = maybeKey.ref;
+      return {
+        $$typeof: REACT_ELEMENT_TYPE,
+        type,
+        key,
+        ref: void 0 !== config ? config : null,
+        props: maybeKey
+      };
+    }
+    exports.Fragment = REACT_FRAGMENT_TYPE;
+    exports.jsx = jsxProd;
+    exports.jsxs = jsxProd;
+  }
+});
+
+// node_modules/react/jsx-runtime.js
+var require_jsx_runtime = __commonJS({
+  "node_modules/react/jsx-runtime.js"(exports, module) {
+    "use strict";
+    if (true) {
+      module.exports = require_react_jsx_runtime_production();
+    } else {
+      module.exports = null;
+    }
+  }
+});
+
+// renderer/design-render.tsx
+var design_render_exports = {};
+__export(design_render_exports, {
+  renderDesign: () => renderDesign
+});
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+async function renderDesign(input, directory) {
+  const d = validateDesign(input, true);
+  const images = /* @__PURE__ */ new Map();
+  for (const b of d.blocks) if (b.type === "image" && b.asset && !images.has(b.asset)) images.set(b.asset, await imageData(directory, b.asset));
+  let [width, height] = d.page.size === "A4" ? [595.28, 841.89] : [612, 792];
+  if (d.page.orientation === "landscape") [width, height] = [height, width];
+  const contentWidth = width - 2 * d.page.margin;
+  function draw(b) {
+    const style = { fontFamily: families[b.font], fontSize: b.size, fontWeight: b.bold ? 700 : 400, color: b.color, textAlign: b.align, marginBottom: b.spacing };
+    if (b.type === "pageBreak") return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PageBreak, {}, b.id);
+    if (b.type === "heading" || b.type === "text") return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { style, children: b.text || " " }, b.id);
+    if (b.type === "columns") return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(View, { style: { flexDirection: "row", marginBottom: b.spacing }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(View, { style: { width: "50%", paddingRight: 10 }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { style: { ...style, marginBottom: 0 }, children: b.left || " " }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(View, { style: { width: "50%", paddingLeft: 10 }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { style: { ...style, marginBottom: 0 }, children: b.right || " " }) })
+    ] }, b.id);
+    if (b.type === "divider") return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(View, { style: { height: b.height, backgroundColor: b.color, marginBottom: b.spacing } }, b.id);
+    if (b.type === "spacer") return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(View, { style: { height: b.height, marginBottom: b.spacing } }, b.id);
+    if (b.type === "table") return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Table, { columns: b.rows[0].map(() => ({ width: { fraction: 1 / b.rows[0].length } })), style: { marginBottom: b.spacing }, children: b.rows.map((row, i) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Row, { header: b.header && i === 0, style: { backgroundColor: b.header && i === 0 ? "#edf0f3" : d.page.background }, children: row.map((cell, j) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Cell, { style: { padding: 7, borderWidth: 0.5, borderColor: "#c7ccd1" }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { style: { ...style, marginBottom: 0, fontWeight: b.header && i === 0 ? 700 : style.fontWeight }, children: cell || " " }) }, j)) }, i)) }, b.id);
+    if (b.type === "image") {
+      const image = images.get(b.asset), limitWidth = contentWidth * b.width / 100;
+      const scale = Math.min(limitWidth / image.width, Math.min(b.height, height - 2 * d.page.margin - b.spacing) / image.height), w = image.width * scale, h = image.height * scale;
+      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(View, { wrap: false, style: { marginBottom: b.spacing, alignItems: b.align === "center" ? "center" : b.align === "right" ? "flex-end" : "flex-start" }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Image, { src: image.src, width: w, height: h, alt: b.text }) }, b.id);
+    }
+  }
+  const serialized = serialize2(/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Document, { title: d.title, fonts, style: { fontFamily: families.sans, fontSize: 11, color: "#18212b" }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Page, { size: { width, height }, margin: d.page.margin, style: { backgroundColor: d.page.background }, children: d.blocks.length ? d.blocks.map(draw) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { children: " " }) }) }));
+  const result = Buffer.from(await renderSerializedDoc(serialized));
+  if (result.length > 48 * 1024 * 1024) throw Error("PDF exceeds 48 MiB. Use smaller images.");
+  return result;
+}
+var import_jsx_runtime, families, fonts;
+var init_design_render = __esm({
+  "renderer/design-render.tsx"() {
+    "use strict";
+    init_dist3();
+    init_dist4();
+    init_document();
+    init_assets();
+    import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
+    families = { sans: "DejaVu Sans", serif: "DejaVu Serif", mono: "DejaVu Sans Mono" };
+    fonts = Object.entries({ sans: "DejaVuSans", serif: "DejaVuSerif", mono: "DejaVuSansMono" }).flatMap(([key, name]) => [
+      { family: families[key], src: fileURLToPath2(new URL(`../renderer/fonts/${name}.ttf`, import.meta.url)) },
+      { family: families[key], src: fileURLToPath2(new URL(`../renderer/fonts/${name}-Bold.ttf`, import.meta.url)), fontWeight: 700 }
+    ]);
+  }
+});
+
+// renderer/design-cli.ts
+var design_cli_exports = {};
+__export(design_cli_exports, {
+  designRequest: () => designRequest
+});
+import { mkdir as mkdir4, writeFile, chmod } from "node:fs/promises";
+import { join as join4 } from "node:path";
+import { homedir as homedir3 } from "node:os";
+import { randomUUID as randomUUID6 } from "node:crypto";
+import { pathToFileURL } from "node:url";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+async function designRequest(r) {
+  const store = new DesignStore();
+  switch (r.action) {
+    case "designNew":
+      return { document: newDesign(r.preset ?? "blank") };
+    case "designList":
+      return store.list(r.template ?? false, r.offset ?? 0);
+    case "designLoad":
+      return { document: await store.load(r.id) };
+    case "designSave":
+      return { document: await store.save(r.document) };
+    case "designTemplate":
+      return { template: await store.template(r.document) };
+    case "designUseTemplate":
+      return { document: await store.useTemplate(r.id) };
+    case "designImport":
+      return importImage(store.directory, r.path);
+    case "designPreview":
+    case "designExport": {
+      const d = validateDesign(r.document, true);
+      const page = r.page ?? 1;
+      if (!Number.isInteger(page) || page < 1 || page > 1e3) throw Error("Invalid preview page.");
+      const { renderDesign: renderDesign2 } = await Promise.resolve().then(() => (init_design_render(), design_render_exports));
+      const data = await renderDesign2(d, store.directory);
+      const dir = r.action === "designExport" ? join4(homedir3(), "Documents", "PDF Studio") : join4(process.env.XDG_CACHE_HOME || join4(homedir3(), ".cache"), "omarchy-pdf-studio");
+      await mkdir4(dir, { recursive: true, mode: 448 });
+      const base = join4(dir, `document-${d.id}-${randomUUID6()}`), path = base + ".pdf";
+      await writeFile(path, data, { flag: "wx", mode: 384 });
+      const result = { path, url: pathToFileURL(path).href };
+      if (r.action === "designExport") return result;
+      try {
+        const { stdout } = await exec("/usr/bin/timeout", ["--signal=KILL", "10s", "/usr/bin/pdfinfo", path], { timeout: 12e3, maxBuffer: 8192, env: { ...process.env, LC_ALL: "C" } });
+        const match = /^Pages:\s+(\d+)\s*$/m.exec(stdout), pages = Number(match?.[1]);
+        if (!Number.isInteger(pages) || pages < 1 || pages > 1e3) throw Error("Preview supports up to 1,000 pages.");
+        const selected = Math.min(page, pages);
+        await exec("/usr/bin/timeout", ["--signal=KILL", "15s", "/usr/bin/pdftoppm", "-f", String(selected), "-l", String(selected), "-singlefile", "-scale-to", "1200", "-png", path, base], { timeout: 17e3, maxBuffer: 8192 });
+        await chmod(base + ".png", 384);
+        return { ...result, previewUrl: pathToFileURL(base + ".png").href, page: selected, pages };
+      } catch (e) {
+        return { ...result, previewError: "PDF is ready, but inline preview is unavailable. Check that Poppler (pdfinfo and pdftoppm) is installed. " + String(e.message).slice(0, 200) };
+      }
+    }
+    default:
+      throw Error("Unknown designer action.");
+  }
+}
+var exec;
+var init_design_cli = __esm({
+  "renderer/design-cli.ts"() {
+    "use strict";
+    init_document();
+    init_design_store();
+    init_assets();
+    exec = promisify(execFile);
   }
 });
 
@@ -4325,11 +4909,11 @@ var init_professional = __esm({
 });
 
 // renderer/vendor/registry/bases/forme/components/theme-provider.tsx
-var import_react3, serializedTheme, mergeStyleInput, mergePdfStyles, renderForSerializer, PdfcnThemeProvider, usePdfcnTheme, useSafeMemo;
+var import_react4, serializedTheme, mergeStyleInput, mergePdfStyles, renderForSerializer, PdfcnThemeProvider, usePdfcnTheme, useSafeMemo;
 var init_theme_provider = __esm({
   "renderer/vendor/registry/bases/forme/components/theme-provider.tsx"() {
     "use strict";
-    import_react3 = __toESM(require_react(), 1);
+    import_react4 = __toESM(require_react(), 1);
     init_professional();
     serializedTheme = professionalTheme;
     mergeStyleInput = (target, input) => {
@@ -4350,7 +4934,7 @@ var init_theme_provider = __esm({
     };
     renderForSerializer = (children, theme2) => {
       serializedTheme = theme2;
-      if (!(0, import_react3.isValidElement)(children) || typeof children.type !== "function") {
+      if (!(0, import_react4.isValidElement)(children) || typeof children.type !== "function") {
         return children;
       }
       if (children.type.__formeType === "Document") {
@@ -4367,64 +4951,13 @@ var init_theme_provider = __esm({
   }
 });
 
-// node_modules/react/cjs/react-jsx-runtime.production.js
-var require_react_jsx_runtime_production = __commonJS({
-  "node_modules/react/cjs/react-jsx-runtime.production.js"(exports) {
-    "use strict";
-    /**
-     * @license React
-     * react-jsx-runtime.production.js
-     *
-     * Copyright (c) Meta Platforms, Inc. and affiliates.
-     *
-     * This source code is licensed under the MIT license found in the
-     * LICENSE file in the root directory of this source tree.
-     */
-    var REACT_ELEMENT_TYPE = /* @__PURE__ */ Symbol.for("react.transitional.element");
-    var REACT_FRAGMENT_TYPE = /* @__PURE__ */ Symbol.for("react.fragment");
-    function jsxProd(type, config, maybeKey) {
-      var key = null;
-      void 0 !== maybeKey && (key = "" + maybeKey);
-      void 0 !== config.key && (key = "" + config.key);
-      if ("key" in config) {
-        maybeKey = {};
-        for (var propName in config)
-          "key" !== propName && (maybeKey[propName] = config[propName]);
-      } else maybeKey = config;
-      config = maybeKey.ref;
-      return {
-        $$typeof: REACT_ELEMENT_TYPE,
-        type,
-        key,
-        ref: void 0 !== config ? config : null,
-        props: maybeKey
-      };
-    }
-    exports.Fragment = REACT_FRAGMENT_TYPE;
-    exports.jsx = jsxProd;
-    exports.jsxs = jsxProd;
-  }
-});
-
-// node_modules/react/jsx-runtime.js
-var require_jsx_runtime = __commonJS({
-  "node_modules/react/jsx-runtime.js"(exports, module) {
-    "use strict";
-    if (true) {
-      module.exports = require_react_jsx_runtime_production();
-    } else {
-      module.exports = null;
-    }
-  }
-});
-
 // renderer/vendor/registry/bases/forme/lib/pdf-primitives.tsx
-var import_jsx_runtime, mergeFormeStyles, View2, Text2, Fixed2;
+var import_jsx_runtime2, mergeFormeStyles, View2, Text2, Fixed2;
 var init_pdf_primitives = __esm({
   "renderer/vendor/registry/bases/forme/lib/pdf-primitives.tsx"() {
     "use strict";
     init_dist3();
-    import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
+    import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
     mergeFormeStyles = (input) => {
       if (!input) {
         return void 0;
@@ -4441,9 +4974,9 @@ var init_pdf_primitives = __esm({
       }
       return Object.keys(merged).length > 0 ? merged : void 0;
     };
-    View2 = ({ style, ...props }) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(View, { ...props, style: mergeFormeStyles(style) });
-    Text2 = ({ style, ...props }) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { ...props, style: mergeFormeStyles(style) });
-    Fixed2 = ({ style, ...props }) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Fixed, { ...props, style: mergeFormeStyles(style) });
+    View2 = ({ style, ...props }) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(View, { ...props, style: mergeFormeStyles(style) });
+    Text2 = ({ style, ...props }) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text, { ...props, style: mergeFormeStyles(style) });
+    Fixed2 = ({ style, ...props }) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Fixed, { ...props, style: mergeFormeStyles(style) });
   }
 });
 
@@ -4474,14 +5007,14 @@ var init_resolve_color = __esm({
 });
 
 // renderer/vendor/registry/bases/forme/components/text/text.tsx
-var import_jsx_runtime2, createTextStyles, Text3;
+var import_jsx_runtime3, createTextStyles, Text3;
 var init_text = __esm({
   "renderer/vendor/registry/bases/forme/components/text/text.tsx"() {
     "use strict";
     init_theme_provider();
     init_pdf_primitives();
     init_resolve_color();
-    import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
+    import_jsx_runtime3 = __toESM(require_jsx_runtime(), 1);
     createTextStyles = (t) => {
       const { fontWeights, letterSpacing } = t.primitives;
       const base = {
@@ -4520,7 +5053,7 @@ var init_text = __esm({
     Text3 = ({
       variant,
       align,
-      color,
+      color: color2,
       weight,
       italic,
       decoration,
@@ -4567,8 +5100,8 @@ var init_text = __esm({
       if (align) {
         semantic.textAlign = align;
       }
-      if (color) {
-        semantic.color = resolveColor(color, theme2.colors);
+      if (color2) {
+        semantic.color = resolveColor(color2, theme2.colors);
       }
       if (Object.keys(semantic).length > 0) {
         styleArray.push(semantic);
@@ -4576,25 +5109,25 @@ var init_text = __esm({
       if (style) {
         styleArray.push(...[style].flat());
       }
-      return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Text2, { style: mergePdfStyles(styleArray), children });
+      return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: mergePdfStyles(styleArray), children });
     };
   }
 });
 
 // renderer/vendor/registry/bases/forme/components/page-header/page-header.tsx
-var import_jsx_runtime3, wrapFixed, createPageHeaderStyles, buildContainerStyles, buildTitleStyles, renderBranded, renderCentered, renderLogoRight, renderLogoLeft, renderTwoColumn, renderMinimal, renderSimple, PageHeader;
+var import_jsx_runtime4, wrapFixed, createPageHeaderStyles, buildContainerStyles, buildTitleStyles, renderBranded, renderCentered, renderLogoRight, renderLogoLeft, renderTwoColumn, renderMinimal, renderSimple, PageHeader;
 var init_page_header = __esm({
   "renderer/vendor/registry/bases/forme/components/page-header/page-header.tsx"() {
     "use strict";
     init_theme_provider();
     init_pdf_primitives();
     init_resolve_color();
-    import_jsx_runtime3 = __toESM(require_jsx_runtime(), 1);
+    import_jsx_runtime4 = __toESM(require_jsx_runtime(), 1);
     wrapFixed = (fixed, node) => {
       if (!fixed) {
         return node;
       }
-      return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Fixed2, { position: "header", children: node });
+      return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Fixed2, { position: "header", children: node });
     };
     createPageHeaderStyles = (t) => {
       const { spacing, borderRadius, fontWeights } = t.primitives;
@@ -4787,61 +5320,61 @@ var init_page_header = __esm({
       }
       return [...base, { color: resolveColor(titleColor, theme2.colors) }];
     };
-    renderBranded = (styles, containerStyles, titleStyles, title, subtitle, noWrap) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(View2, { wrap: !noWrap, style: containerStyles, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: titleStyles, children: title }),
-      subtitle && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: [styles.subtitle, styles.subtitleBranded], children: subtitle })
+    renderBranded = (styles, containerStyles, titleStyles, title, subtitle, noWrap) => /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View2, { wrap: !noWrap, style: containerStyles, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: titleStyles, children: title }),
+      subtitle && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: [styles.subtitle, styles.subtitleBranded], children: subtitle })
     ] });
-    renderCentered = (styles, containerStyles, titleStyles, title, subtitle, noWrap) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(View2, { wrap: !noWrap, style: containerStyles, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: titleStyles, children: title }),
-      subtitle && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: [styles.subtitle, styles.subtitleCentered], children: subtitle })
+    renderCentered = (styles, containerStyles, titleStyles, title, subtitle, noWrap) => /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View2, { wrap: !noWrap, style: containerStyles, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: titleStyles, children: title }),
+      subtitle && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: [styles.subtitle, styles.subtitleCentered], children: subtitle })
     ] });
-    renderLogoRight = (styles, containerStyles, titleStyles, title, subtitle, logo, noWrap) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(View2, { wrap: !noWrap, style: containerStyles, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(View2, { style: styles.logoRightContent, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: titleStyles, children: title }),
-        subtitle && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: styles.subtitle, children: subtitle })
+    renderLogoRight = (styles, containerStyles, titleStyles, title, subtitle, logo, noWrap) => /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View2, { wrap: !noWrap, style: containerStyles, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View2, { style: styles.logoRightContent, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: titleStyles, children: title }),
+        subtitle && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: styles.subtitle, children: subtitle })
       ] }),
-      logo && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(View2, { style: styles.logoRightLogoContainer, children: logo })
+      logo && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(View2, { style: styles.logoRightLogoContainer, children: logo })
     ] });
-    renderLogoLeft = (styles, containerStyles, titleStyles, title, subtitle, logo, rightText, rightSubText, noWrap) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(View2, { wrap: !noWrap, style: containerStyles, children: [
-      logo && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(View2, { style: styles.logoContainer, children: logo }),
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(View2, { style: styles.logoContent, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: titleStyles, children: title }),
-        subtitle && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: styles.subtitle, children: subtitle })
+    renderLogoLeft = (styles, containerStyles, titleStyles, title, subtitle, logo, rightText, rightSubText, noWrap) => /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View2, { wrap: !noWrap, style: containerStyles, children: [
+      logo && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(View2, { style: styles.logoContainer, children: logo }),
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View2, { style: styles.logoContent, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: titleStyles, children: title }),
+        subtitle && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: styles.subtitle, children: subtitle })
       ] }),
-      (rightText || rightSubText) && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(View2, { style: styles.simpleRight, children: [
-        rightText && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: styles.rightText, children: rightText }),
-        rightSubText && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: styles.rightSubText, children: rightSubText })
+      (rightText || rightSubText) && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View2, { style: styles.simpleRight, children: [
+        rightText && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: styles.rightText, children: rightText }),
+        rightSubText && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: styles.rightSubText, children: rightSubText })
       ] })
     ] });
-    renderTwoColumn = (styles, containerStyles, titleStyles, title, subtitle, address, phone, email, noWrap) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(View2, { wrap: !noWrap, style: containerStyles, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(View2, { style: styles.twoColumnLeft, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: titleStyles, children: title }),
-        subtitle && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: styles.subtitle, children: subtitle })
+    renderTwoColumn = (styles, containerStyles, titleStyles, title, subtitle, address, phone, email, noWrap) => /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View2, { wrap: !noWrap, style: containerStyles, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View2, { style: styles.twoColumnLeft, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: titleStyles, children: title }),
+        subtitle && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: styles.subtitle, children: subtitle })
       ] }),
-      (address || phone || email) && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(View2, { style: styles.twoColumnRight, children: [
-        address && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: styles.contactInfo, children: address }),
-        phone && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: styles.contactInfo, children: phone }),
-        email && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: styles.contactInfo, children: email })
+      (address || phone || email) && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View2, { style: styles.twoColumnRight, children: [
+        address && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: styles.contactInfo, children: address }),
+        phone && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: styles.contactInfo, children: phone }),
+        email && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: styles.contactInfo, children: email })
       ] })
     ] });
-    renderMinimal = (styles, containerStyles, titleStyles, title, subtitle, rightText, rightSubText, noWrap) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(View2, { wrap: !noWrap, style: containerStyles, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(View2, { style: styles.minimalLeft, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: titleStyles, children: title }),
-        subtitle && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: styles.subtitle, children: subtitle })
+    renderMinimal = (styles, containerStyles, titleStyles, title, subtitle, rightText, rightSubText, noWrap) => /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View2, { wrap: !noWrap, style: containerStyles, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View2, { style: styles.minimalLeft, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: titleStyles, children: title }),
+        subtitle && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: styles.subtitle, children: subtitle })
       ] }),
-      (rightText || rightSubText) && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(View2, { style: styles.minimalRight, children: [
-        rightText && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: styles.rightText, children: rightText }),
-        rightSubText && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: styles.rightSubText, children: rightSubText })
+      (rightText || rightSubText) && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View2, { style: styles.minimalRight, children: [
+        rightText && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: styles.rightText, children: rightText }),
+        rightSubText && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: styles.rightSubText, children: rightSubText })
       ] })
     ] });
-    renderSimple = (styles, containerStyles, titleStyles, title, subtitle, rightText, rightSubText, noWrap) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(View2, { wrap: !noWrap, style: containerStyles, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(View2, { style: styles.simpleLeft, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: titleStyles, children: title }),
-        subtitle && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: styles.subtitle, children: subtitle })
+    renderSimple = (styles, containerStyles, titleStyles, title, subtitle, rightText, rightSubText, noWrap) => /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View2, { wrap: !noWrap, style: containerStyles, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View2, { style: styles.simpleLeft, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: titleStyles, children: title }),
+        subtitle && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: styles.subtitle, children: subtitle })
       ] }),
-      (rightText || rightSubText) && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(View2, { style: styles.simpleRight, children: [
-        rightText && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: styles.rightText, children: rightText }),
-        rightSubText && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Text2, { style: styles.rightSubText, children: rightSubText })
+      (rightText || rightSubText) && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View2, { style: styles.simpleRight, children: [
+        rightText && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: styles.rightText, children: rightText }),
+        rightSubText && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text2, { style: styles.rightSubText, children: rightSubText })
       ] })
     ] });
     PageHeader = ({
@@ -4997,72 +5530,72 @@ var invoice_exports = {};
 __export(invoice_exports, {
   renderInvoice: () => renderInvoice
 });
-import { fileURLToPath } from "node:url";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
 function Content({ data: d }) {
   const t = totals(d);
   const pages = [];
   for (let i = 0; i < d.items.length; i += 5) pages.push(d.items.slice(i, i + 5));
-  return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Document, { title: `Invoice ${d.number}`, fonts, children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(import_jsx_runtime4.Fragment, { children: pages.map((items, p) => /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(Page, { size: "A4", margin: 40, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(PageHeader, { title: d.company, subtitle: "INVOICE", variant: "minimal" }),
-    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View, { style: { flexDirection: "row", marginBottom: 20 }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View, { style: { width: "55%", paddingRight: 20 }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text3, { variant: "xs", children: d.companyAddress }),
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(Text3, { variant: "sm", weight: "bold", children: [
+  return /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Document, { title: `Invoice ${d.number}`, fonts: fonts2, children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(import_jsx_runtime5.Fragment, { children: pages.map((items, p) => /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(Page, { size: "A4", margin: 40, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(PageHeader, { title: d.company, subtitle: "INVOICE", variant: "minimal" }),
+    /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(View, { style: { flexDirection: "row", marginBottom: 20 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(View, { style: { width: "55%", paddingRight: 20 }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Text3, { variant: "xs", children: d.companyAddress }),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(Text3, { variant: "sm", weight: "bold", children: [
           "Bill to: ",
           d.customer
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text3, { variant: "xs", children: d.customerAddress })
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Text3, { variant: "xs", children: d.customerAddress })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View, { style: { width: "45%" }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text3, { variant: "sm", weight: "bold", children: d.number }),
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(Text3, { variant: "xs", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(View, { style: { width: "45%" }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Text3, { variant: "sm", weight: "bold", children: d.number }),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(Text3, { variant: "xs", children: [
           "Issued: ",
           d.date
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(Text3, { variant: "xs", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(Text3, { variant: "xs", children: [
           "Due: ",
           d.due
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(Text3, { variant: "xs", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(Text3, { variant: "xs", children: [
           "Currency: ",
           d.currency
         ] })
       ] })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View, { style: { flexDirection: "row", padding: 8, backgroundColor: "#eef1f5" }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text3, { style: { width: "46%" }, variant: "xs", noMargin: true, weight: "bold", children: "DESCRIPTION" }),
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text3, { style: { width: "12%" }, variant: "xs", noMargin: true, children: "QTY" }),
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text3, { style: { width: "21%" }, variant: "xs", noMargin: true, children: "RATE" }),
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text3, { style: { width: "21%" }, variant: "xs", noMargin: true, align: "right", children: "AMOUNT" })
+    /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(View, { style: { flexDirection: "row", padding: 8, backgroundColor: "#eef1f5" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Text3, { style: { width: "46%" }, variant: "xs", noMargin: true, weight: "bold", children: "DESCRIPTION" }),
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Text3, { style: { width: "12%" }, variant: "xs", noMargin: true, children: "QTY" }),
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Text3, { style: { width: "21%" }, variant: "xs", noMargin: true, children: "RATE" }),
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Text3, { style: { width: "21%" }, variant: "xs", noMargin: true, align: "right", children: "AMOUNT" })
     ] }),
-    items.map((line, i) => /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View, { wrap: false, style: { flexDirection: "row", padding: 8, borderBottomWidth: 1, borderBottomColor: "#e5e7eb" }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text3, { style: { width: "46%", paddingRight: 10 }, variant: "xs", noMargin: true, children: line.description }),
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text3, { style: { width: "12%" }, variant: "xs", noMargin: true, children: line.quantity }),
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text3, { style: { width: "21%" }, variant: "xs", noMargin: true, children: money(totals({ ...d, items: [{ ...line, quantity: "1" }] }).subtotal, d.currency) }),
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text3, { style: { width: "21%" }, variant: "xs", noMargin: true, align: "right", children: money(t.lines[p * 5 + i], d.currency) })
+    items.map((line, i) => /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(View, { wrap: false, style: { flexDirection: "row", padding: 8, borderBottomWidth: 1, borderBottomColor: "#e5e7eb" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Text3, { style: { width: "46%", paddingRight: 10 }, variant: "xs", noMargin: true, children: line.description }),
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Text3, { style: { width: "12%" }, variant: "xs", noMargin: true, children: line.quantity }),
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Text3, { style: { width: "21%" }, variant: "xs", noMargin: true, children: money(totals({ ...d, items: [{ ...line, quantity: "1" }] }).subtotal, d.currency) }),
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Text3, { style: { width: "21%" }, variant: "xs", noMargin: true, align: "right", children: money(t.lines[p * 5 + i], d.currency) })
     ] }, i)),
-    p === pages.length - 1 && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(View, { wrap: false, style: { marginTop: 20 }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(Text3, { variant: "sm", align: "right", children: [
+    p === pages.length - 1 && /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(View, { wrap: false, style: { marginTop: 20 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(Text3, { variant: "sm", align: "right", children: [
         "Subtotal: ",
         money(t.subtotal, d.currency)
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(Text3, { variant: "sm", align: "right", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(Text3, { variant: "sm", align: "right", children: [
         "Tax (",
         d.taxRate,
         "%): ",
         money(t.tax, d.currency)
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(Text3, { variant: "lg", align: "right", weight: "bold", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(Text3, { variant: "lg", align: "right", weight: "bold", children: [
         "Total: ",
         money(t.total, d.currency)
       ] }),
-      d.payment && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(Text3, { variant: "xs", children: [
+      d.payment && /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(Text3, { variant: "xs", children: [
         "Payment details: ",
         d.payment
       ] }),
-      d.notes && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Text3, { variant: "xs", children: d.notes })
+      d.notes && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Text3, { variant: "xs", children: d.notes })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(Text3, { variant: "xs", color: "mutedForeground", style: { marginTop: 24 }, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(Text3, { variant: "xs", color: "mutedForeground", style: { marginTop: 24 }, children: [
       d.number,
       " \xB7 Section ",
       p + 1,
@@ -5073,10 +5606,10 @@ function Content({ data: d }) {
 }
 async function renderInvoice(data) {
   validate(data, true);
-  const document = serialize2(/* @__PURE__ */ (0, import_jsx_runtime4.jsx)(PdfcnThemeProvider, { theme, children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Content, { data }) }));
+  const document = serialize2(/* @__PURE__ */ (0, import_jsx_runtime5.jsx)(PdfcnThemeProvider, { theme, children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Content, { data }) }));
   return Buffer.from(await renderSerializedDoc(document));
 }
-var import_jsx_runtime4, theme, fonts;
+var import_jsx_runtime5, theme, fonts2;
 var init_invoice = __esm({
   "renderer/invoice.tsx"() {
     "use strict";
@@ -5087,120 +5620,30 @@ var init_invoice = __esm({
     init_page_header();
     init_theme_provider();
     init_model();
-    import_jsx_runtime4 = __toESM(require_jsx_runtime(), 1);
+    import_jsx_runtime5 = __toESM(require_jsx_runtime(), 1);
     theme = structuredClone(professionalTheme);
     theme.typography.body.fontFamily = "DejaVu Sans";
     theme.typography.heading.fontFamily = "DejaVu Sans";
-    fonts = [{ family: "DejaVu Sans", src: fileURLToPath(new URL("../renderer/fonts/DejaVuSans.ttf", import.meta.url)) }, { family: "DejaVu Sans", src: fileURLToPath(new URL("../renderer/fonts/DejaVuSans-Bold.ttf", import.meta.url)), fontWeight: 700 }];
+    fonts2 = [{ family: "DejaVu Sans", src: fileURLToPath3(new URL("../renderer/fonts/DejaVuSans.ttf", import.meta.url)) }, { family: "DejaVu Sans", src: fileURLToPath3(new URL("../renderer/fonts/DejaVuSans-Bold.ttf", import.meta.url)), fontWeight: 700 }];
   }
 });
 
-// renderer/io.ts
-import { open } from "node:fs/promises";
-import { constants } from "node:fs";
-var MAX_REQUEST_BYTES = 256 * 1024;
-async function requestLine(input) {
-  const chunks = [];
-  let size = 0;
-  for await (const value of input) {
-    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
-    const newline = chunk.indexOf(10);
-    const part = newline < 0 ? chunk : chunk.subarray(0, newline);
-    size += part.length;
-    if (size > MAX_REQUEST_BYTES) throw Error("Request is too large.");
-    chunks.push(part);
-    if (newline >= 0) return Buffer.concat(chunks, size).toString("utf8");
-  }
-  if (!size) throw Error("No request received.");
-  return Buffer.concat(chunks, size).toString("utf8");
-}
-async function readBounded(path, limit) {
-  const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
-  try {
-    const info = await file.stat();
-    if (!info.isFile() || info.size > limit) throw Error("Draft storage exceeds the supported size or is not a regular file.");
-    const chunks = [];
-    let size = 0;
-    while (true) {
-      const buffer = Buffer.alloc(Math.min(65536, limit + 1 - size));
-      const { bytesRead } = await file.read(buffer, 0, buffer.length, null);
-      if (!bytesRead) break;
-      size += bytesRead;
-      if (size > limit) throw Error("Draft storage exceeds the supported size.");
-      chunks.push(buffer.subarray(0, bytesRead));
-    }
-    return Buffer.concat(chunks, size).toString("utf8");
-  } finally {
-    await file.close();
-  }
-}
-function errorReply(error) {
-  return { ok: false, error: String(error || "Operation failed.").slice(0, 1024) };
-}
-function encodeReply(value) {
-  const json = JSON.stringify(value);
-  if (Buffer.byteLength(json) > MAX_REQUEST_BYTES) throw Error("Renderer response is too large.");
-  return json + "\n";
-}
-function reply(value) {
-  process.stdout.write(encodeReply(value));
-}
-
 // renderer/cli.ts
-import { pathToFileURL } from "node:url";
-import { mkdir as mkdir2, writeFile } from "node:fs/promises";
-import { join as join2 } from "node:path";
-import { homedir as homedir2 } from "node:os";
-import { randomUUID as randomUUID3 } from "node:crypto";
+init_io();
+import { pathToFileURL as pathToFileURL2 } from "node:url";
+import { mkdir as mkdir5, writeFile as writeFile2 } from "node:fs/promises";
+import { join as join5 } from "node:path";
+import { homedir as homedir4 } from "node:os";
+import { randomUUID as randomUUID7 } from "node:crypto";
 
 // renderer/store.ts
 init_model();
+init_io();
+init_lock();
 import { mkdir, open as open3, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID as randomUUID2 } from "node:crypto";
-
-// renderer/lock.ts
-import { open as open2 } from "node:fs/promises";
-import { spawn } from "node:child_process";
-async function acquireLock(path) {
-  const file = await open2(path, "a", 384);
-  await file.close();
-  const child = spawn("/usr/bin/flock", [
-    "--exclusive",
-    "--nonblock",
-    path,
-    process.execPath,
-    "-e",
-    "process.stdin.resume();process.stdout.write('locked\\n');"
-  ], { stdio: ["pipe", "pipe", "ignore"] });
-  let failure;
-  child.stdin.on("error", () => {
-  });
-  const exited = new Promise((resolve2) => {
-    child.once("error", (e) => {
-      failure = e;
-      resolve2();
-    });
-    child.once("exit", () => resolve2());
-  });
-  try {
-    await new Promise((resolve2, reject) => {
-      child.stdout.once("data", () => resolve2());
-      void exited.then(() => reject(failure || Error("Draft storage is locked. Another save may be running; retry shortly.")));
-    });
-  } catch (e) {
-    child.stdin.end();
-    await exited;
-    throw e;
-  }
-  return async () => {
-    child.stdin.end();
-    await exited;
-  };
-}
-
-// renderer/store.ts
 var MAX_STORE_BYTES = 16 * 1024 * 1024;
 var MAX_DRAFTS = 1e3;
 var PAGE_SIZE = 50;
@@ -5294,7 +5737,10 @@ try {
   if (!r || typeof r !== "object" || Array.isArray(r) || typeof r.action !== "string") throw Error("Invalid request.");
   const store = new Store();
   let result;
-  switch (r.action) {
+  if (r.action.startsWith("design")) {
+    const { designRequest: designRequest2 } = await Promise.resolve().then(() => (init_design_cli(), design_cli_exports));
+    result = await designRequest2(r);
+  } else switch (r.action) {
     case "list":
       result = await store.list(r.offset ?? 0);
       break;
@@ -5318,12 +5764,12 @@ try {
       const d = validate(r.draft, true);
       if (!d.number) throw Error("Save this draft to assign its invoice number first.");
       const { renderInvoice: renderInvoice2 } = await Promise.resolve().then(() => (init_invoice(), invoice_exports));
-      const bytes = await renderInvoice2(d);
-      const dir = r.action === "preview" ? join2(process.env.XDG_CACHE_HOME || join2(homedir2(), ".cache"), "omarchy-pdf-studio") : join2(homedir2(), "Documents", "PDF Studio");
-      await mkdir2(dir, { recursive: true, mode: 448 });
-      const path = join2(dir, `invoice-${d.id}-${randomUUID3()}.pdf`);
-      await writeFile(path, bytes, { flag: "wx", mode: 384 });
-      result = { path, url: pathToFileURL(path).href };
+      const bytes2 = await renderInvoice2(d);
+      const dir = r.action === "preview" ? join5(process.env.XDG_CACHE_HOME || join5(homedir4(), ".cache"), "omarchy-pdf-studio") : join5(homedir4(), "Documents", "PDF Studio");
+      await mkdir5(dir, { recursive: true, mode: 448 });
+      const path = join5(dir, `invoice-${d.id}-${randomUUID7()}.pdf`);
+      await writeFile2(path, bytes2, { flag: "wx", mode: 384 });
+      result = { path, url: pathToFileURL2(path).href };
       break;
     }
     default:

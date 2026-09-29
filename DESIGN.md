@@ -34,5 +34,19 @@
   rendering failure are shown as errors. Existing data is preserved on corruption.
 - Close: visible close/Escape prompts for unsaved edits. Host hide releases focus
   and keeps memory; shell restart loses unsaved edits. Saved drafts survive removal.
-- Deferred: customer book, logos, quotes, status ledger, in-panel PDF preview,
-  marketplace publication.
+- Invoice-specific work deferred: customer book, logos, quotes and status ledger.
+  Marketplace publication remains pending. The general designer is described below.
+
+## Visual document builder
+
+The accepted next scope is a native flow-based designer: heading, text, image,
+table, divider, spacer, two text columns and page-break blocks; reorder, duplicate,
+undo/redo, page settings, a rendered page preview and reusable templates.
+`Panel.qml` routes between the designer and the existing invoice editor. Existing
+invoice storage and numbering remain intact. Designer data lives in `designs.json`
+and imported PNG/JPEG assets under `assets/`, outside shell configuration.
+No remote image URLs, executable templates or HTML are accepted. Images are copied
+by content hash with byte/pixel limits. Preview rasterization uses Poppler's
+`pdfinfo` and `pdftoppm` (optional for the inline preview; PDF export remains usable
+without them). Fonts and the PDF renderer remain bundled. Preview refresh is
+explicit, keeping typing responsive. Precise free-positioning is deferred.

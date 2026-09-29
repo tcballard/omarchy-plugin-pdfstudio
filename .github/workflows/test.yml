@@ -21,10 +21,11 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
-      - run: ./tests/run
       - name: Install Qt offscreen runtime libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libegl1 libopengl0
+          sudo apt-get install -y libegl1 libopengl0 poppler-utils
+      - run: tests/run
       - run: python -m pip install PySide6-Essentials==6.8.3
       - run: python tests/qml-popup.py
+      - run: python tests/qml-popup.py --designer
