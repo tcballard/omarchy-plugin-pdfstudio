@@ -34,3 +34,14 @@ export async function readBounded(path:string,limit:number):Promise<string> {
     return Buffer.concat(chunks,size).toString('utf8');
   } finally {await file.close();}
 }
+
+// Enforce the producer bound before the shell's StdioCollector sees output.
+export function errorReply(error:unknown) {
+  return {ok:false,error:String(error || 'Operation failed.').slice(0,1024)};
+}
+export function encodeReply(value:unknown):string {
+  const json=JSON.stringify(value);
+  if(Buffer.byteLength(json)>MAX_REQUEST_BYTES) throw Error('Renderer response is too large.');
+  return json+'\n';
+}
+export function reply(value:unknown) {process.stdout.write(encodeReply(value));}

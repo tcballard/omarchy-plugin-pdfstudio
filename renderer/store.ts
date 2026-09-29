@@ -1,4 +1,4 @@
-import {mkdir,writeFile,rename,unlink} from 'node:fs/promises';
+import {mkdir,open,rename,unlink} from 'node:fs/promises';
 import {join} from 'node:path';
 import {homedir} from 'node:os';
 import {randomUUID} from 'node:crypto';
@@ -52,7 +52,13 @@ export class Store {
       const json=JSON.stringify(state);
       if(Buffer.byteLength(json)>MAX_STORE_BYTES) throw Error('Draft storage exceeds the 16 MiB limit. Your data has not been overwritten.');
       const temp=join(this.directory,`.drafts-${randomUUID()}.tmp`);
-      try {await writeFile(temp,json,{flag:'wx',mode:0o600});await rename(temp,join(this.directory,'drafts.json'));}
+      try {
+        const file=await open(temp,'wx',0o600);
+        try {await file.writeFile(json);await file.sync();} finally {await file.close();}
+        await rename(temp,join(this.directory,'drafts.json'));
+        const directory=await open(this.directory,'r');
+        try {await directory.sync();} finally {await directory.close();}
+      }
       finally {await unlink(temp).catch(()=>{});}
       return d;
     } finally {await release();}

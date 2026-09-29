@@ -110,3 +110,21 @@ test('killing a lock owner releases the lock without deleting the file',{timeout
   assert.equal(await readFile(path,'utf8'),'');
  } finally {child.kill('SIGKILL');await rm(dir,{recursive:true,force:true});}
 });
+
+test('helper replies bound errors and output bytes before writing',async()=>{
+ const {errorReply,encodeReply,MAX_REQUEST_BYTES}=await import('../renderer/io');
+ assert.equal(errorReply('x'.repeat(100000)).error.length,1024);
+ assert.throws(()=>encodeReply({value:'£'.repeat(MAX_REQUEST_BYTES)}),/response is too large/);
+ assert.equal(JSON.parse(encodeReply({ok:true})).ok,true);
+});
+
+test('PDF file URLs round-trip paths containing spaces, percent and hash',async()=>{
+ const {fileURLToPath}=await import('node:url');
+ const dir=await mkdtemp(join(tmpdir(),'pdfstudio # 100%-'));
+ try {
+  const d=fresh();d.company='Example';d.customer='Customer';d.number='TEST-URL';d.items[0].description='Design';
+  const result=JSON.parse(execFileSync(process.execPath,[cli],{env:{...process.env,XDG_CACHE_HOME:dir},input:JSON.stringify({action:'preview',draft:d})+'\n',encoding:'utf8'}));
+  assert.equal(result.ok,true);assert.equal(fileURLToPath(result.url),result.path);
+  assert.equal((await readFile(result.path)).subarray(0,5).toString(),'%PDF-');
+ } finally {await rm(dir,{recursive:true,force:true});}
+});

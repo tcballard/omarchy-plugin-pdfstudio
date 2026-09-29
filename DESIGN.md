@@ -10,7 +10,7 @@
 - Renderer: selected MIT pdfcn components + pinned Forme, embedded DejaVu fonts.
 - Commands: Node.js for JSON helper; Qt's external URL opener for the PDF viewer.
   No shell command interpolation. No plugin install hooks or privileged actions.
-- Dependencies: Node.js 22+ and default PDF viewer. React, Forme, WASM and fonts
+- Dependencies: Node.js 22+, util-linux flock and a default PDF viewer. React, Forme, WASM and fonts
   ship in the repository. npm is used only by developers and CI to rebuild;
   install, update and rendering do not run a package manager or fetch assets.
 - Distribution: readable ESM bundle plus Forme CJS/WASM in `dist/`, with upstream
@@ -19,9 +19,17 @@
 - Boundary: invoice content is JSON sent over stdin, not executable templates or
   command-line arguments. No arbitrary user font/image/template URLs are accepted.
 - Limits: 100 lines, bounded text/decimals, 256 KiB helper request, 45s operation
-  timeout. Currency restricted to GBP/EUR/USD. One manually chosen tax rate.
+  timeout, bounded helper replies and plain-text status messages. Currency restricted to GBP/EUR/USD. One manually chosen tax rate.
 - Storage: private files/directories, atomic replacement, exclusive write lock,
   revision comparison, unique invoice numbers and non-overwriting PDF export.
+  Draft saves flush the temporary file before replacement and its directory after.
+- Panel requests: serialize work through process completion and queued follow-ups;
+  require both parsed stdout and a successful normal exit before applying results.
+  Failed replacements preserve edits. Host hide cancels queued navigation/rendering
+  while allowing an explicit save already in progress to finish.
+- Runtime failures: five-second startup and fifty-second whole-operation watchdogs;
+  terminate the supervised helper on timeout and ignore its late result.
+  Node preload environment variables are removed from the helper environment.
 - Failures: invalid input, missing renderer, storage error, concurrent edit and
   rendering failure are shown as errors. Existing data is preserved on corruption.
 - Close: visible close/Escape prompts for unsaved edits. Host hide releases focus
