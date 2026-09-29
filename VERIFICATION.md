@@ -7,13 +7,21 @@ workspace. Source contract inspected against Omarchy quattro commit
 Passed:
 
 - `npm ci` with the committed lockfile and `.npmrc` settings.
-- `./tests/run`: manifest validation, strict TypeScript typecheck, six Node tests
+- `./tests/run`: manifest validation, strict TypeScript typecheck, twelve Node tests
   covering decimal rounding, invalid input, draft number/revision/corruption rules,
   real PDF rendering, stdin helper new/save/list/preview from a different cwd,
   and the distributed renderer with no source, node_modules, npm or tsx available.
+  Hardening regressions cover oversized unterminated byte streams (including
+  multibyte text), unknown-field removal, paged summaries and on-demand loading,
+  storage size/count limits without data replacement, editing at the count limit,
+  concurrent writers, old empty lock files and SIGKILL recovery.
 - `npm run check:bundle`: rebuilt output exactly matches committed assets and
   the source/lockfile hashes. The check is now part of `./tests/run`.
-- Toolkit `validate_plugin.py .`: valid, including the installed dependency tree.
+- Clean checkout at a different filesystem path: `npm ci` followed by
+  `./tests/run` passes with the committed bundle unchanged.
+- `npm audit --json`: zero reported vulnerabilities after pinning esbuild 0.28.2.
+- Toolkit `validate_plugin.py --json --security` on tracked release files:
+  manifest valid; advisory capability review is not security certification.
 - Qt 6.8 `qmlformat -n Panel.qml`: QML syntax accepted. This does not resolve or
   validate Quickshell/Omarchy imports and runtime bindings.
 - Fictional three-line invoice: exported PDF text and rendered page visually
@@ -24,7 +32,15 @@ Not run: Omarchy's installed validator, live discovery/enablement, actual panel
 controls, focus, Escape/close, repeated summon/hide, multi-monitor placement,
 reload, fresh plugin installation/removal and the platform PDF viewer action.
 
-Before release, install on the target machine and exercise those paths. Save a
+The previous CI mismatch was caused by building with locally installed esbuild
+0.28.2 while the lockfile pinned 0.28.0. The build now checks the installed esbuild
+version against the lockfile and records its version in the asset manifest.
+Save locking uses `/usr/bin/flock` from util-linux, without invoking a shell;
+its persistent lock file must not be deleted. No npm setup is needed at runtime.
+
+Before release, install on the target machine and exercise those paths. Check
+Previous/Next with over 50 drafts and opening a saved draft after unsaved edits.
+Save a
 draft, restart the shell and confirm restoration. Verify invalid prices, an
 unwritable data directory, a missing Node runtime and a PDF render failure show
 useful errors. Compare output in the target PDF viewer. Capture an actual panel

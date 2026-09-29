@@ -30,7 +30,7 @@ line descriptions accept 200. GBP, EUR and USD use two decimal places.
 
 ## Try the development checkout
 
-Requirements: Omarchy Quattro, Node.js 22+, Git and a PDF viewer. Current Omarchy
+Requirements: Omarchy Quattro, Node.js 22+, Git, util-linux (`/usr/bin/flock`) and a PDF viewer. Current Omarchy
 installs configure Node.js through Mise; it must be available to the shell.
 
 ```bash
@@ -64,9 +64,13 @@ you clear them. Removing the plugin preserves all drafts and exported documents:
 omarchy plugin remove io.github.tcballard.pdf-studio
 ```
 
-If a process crashes during a save and leaves `write.lock`, first verify no helper
-is running, back up the data directory, then remove that lock. Corrupt data fails
-closed and is never replaced with an empty list.
+The operating system releases save locks after a helper exits or crashes. The
+`write.lock` file stays in place and should not be removed. Corrupt or oversized
+data fails closed and is never replaced with an empty list. Storage supports up
+to 1,000 drafts and 16 MiB; existing drafts can still be edited at the count limit.
+The draft picker shows 50 summaries per page and loads invoice details on demand.
+Requests are limited to 256 KiB before parsing, and unknown invoice fields are
+removed before saving.
 
 ## Development and evidence
 
