@@ -47,3 +47,25 @@ test('stdin helper works outside its checkout and saves then previews',async()=>
   assert.equal(run({action:'list'}).drafts.length,1);
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('distributed renderer runs with no node_modules, npm or tsx',async()=>{
+ const {execFileSync}=await import('node:child_process');
+ const {fileURLToPath}=await import('node:url');
+ const {cp,mkdir}=await import('node:fs/promises');
+ const dir=await mkdtemp(join(tmpdir(),'pdfstudio-distributed-'));
+ try {
+  await cp(fileURLToPath(new URL('../dist',import.meta.url)),join(dir,'dist'),{recursive:true});
+  await mkdir(join(dir,'renderer'));
+  await cp(fileURLToPath(new URL('../renderer/fonts',import.meta.url)),join(dir,'renderer/fonts'),{recursive:true});
+  // Only shipped assets; no source, modules, network bootstrap or package manager.
+  const run=(request:unknown)=>JSON.parse(execFileSync(process.execPath,[join(dir,'dist/renderer.mjs')],{cwd:dir,env:{...process.env,PATH:'/nonexistent',NODE_PATH:'',XDG_DATA_HOME:join(dir,'data'),XDG_CACHE_HOME:join(dir,'cache')},input:JSON.stringify(request)+'\n',encoding:'utf8',timeout:10000}));
+  const d=run({action:'new'}).draft;
+  d.company='Clean Install Studio';d.customer='Example Customer';d.taxRate='20';
+  d.items=[{description:'Packaged PDF export',quantity:'1.125',price:'19.99'}];
+  const saved=run({action:'save',draft:d});assert.equal(saved.ok,true);
+  assert.equal(run({action:'total',draft:saved.draft}).total,'GBP 26.99');
+  const preview=run({action:'preview',draft:saved.draft});assert.equal(preview.ok,true);
+  assert.equal((await readFile(preview.path)).subarray(0,5).toString(),'%PDF-');
+  assert.equal(run({action:'list'}).drafts.length,1);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});

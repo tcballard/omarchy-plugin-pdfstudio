@@ -30,33 +30,23 @@ line descriptions accept 200. GBP, EUR and USD use two decimal places.
 
 ## Try the development checkout
 
-Requirements: Omarchy Quattro, Node.js 22+, npm, Git and a PDF viewer. Python 3 is
-needed for the portable test script. Install missing system dependencies yourself
-through your normal package workflow.
-
-Install from GitHub, then set up the renderer in the installed copy:
+Requirements: Omarchy Quattro, Node.js 22+, Git and a PDF viewer. Current Omarchy
+installs configure Node.js through Mise; it must be available to the shell.
 
 ```bash
 omarchy plugin add https://github.com/tcballard/omarchy-plugin-pdfstudio.git --enable
-cd "$HOME/.config/omarchy/plugins/io.github.tcballard.pdf-studio"
-npm ci
-omarchy plugin validate .
 omarchy-shell shell summon io.github.tcballard.pdf-studio '{}'
 ```
 
-For development, clone this repository and run `npm ci` before `./tests/run`.
-
-`.npmrc` disables lifecycle scripts and binary symlinks, which Omarchy's plugin
-validator rejects. Dependencies are pinned in `package-lock.json`. An initial
-npm install needs network access; creating invoices afterwards works offline.
-The helper starts on demand, communicates over stdin/stdout and exits after one
-request. Missing dependencies produce a setup error in the panel.
+The ready-to-run renderer, React/Forme dependencies, WebAssembly engine and fonts
+ship in the repository. **No npm install, build step or first-run download is
+needed.** Rendering works offline. The Node.js runtime itself is not bundled.
+The helper starts on demand and exits after one JSON request.
 
 Use Save draft before restarting or disabling the shell. Close/Escape offers
 Save, Discard or Cancel. A host hide retains the draft in memory via `keepLoaded`;
-only an explicit save persists it across a shell restart. Updates should be followed
-by `npm ci` in the installed directory and a shell restart when a kept panel has
-already loaded the previous code.
+only an explicit save persists it across a shell restart. After updating, restart the shell if the kept panel has already loaded the
+previous code. The updated renderer is included in the plugin update.
 
 ## Data and removal
 
@@ -82,9 +72,16 @@ closed and is never replaced with an empty list.
 
 ```bash
 npm ci
+npm run build
 ./tests/run
 node --import tsx scripts/render-demo.ts /tmp/sample-invoice.pdf
 ```
+
+npm is for development only. `npm run build` creates the committed `dist/`
+renderer using the lockfile. `./tests/run` checks the generated bundle matches
+its source, then tests the renderer with only the shipped runtime files present.
+`dist/manifest.json` records source and asset hashes; third-party notices ship
+alongside the bundle. Commit rebuilt `dist/` files with renderer changes.
 
 See [DESIGN.md](DESIGN.md) for boundaries and [VERIFICATION.md](VERIFICATION.md)
 for exact evidence and live checks still required. Preview PDFs are examples of

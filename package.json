@@ -8,17 +8,20 @@
   },
   "scripts": {
     "test": "node --import tsx --test tests/*.test.ts",
-    "typecheck": "node node_modules/typescript/bin/tsc --noEmit"
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
+    "build": "node scripts/build-renderer.mjs",
+    "check:bundle": "node scripts/build-renderer.mjs --check"
   },
   "dependencies": {
     "@formepdf/core": "0.25.0",
     "@formepdf/react": "0.25.0",
-    "react": "19.2.5",
-    "tsx": "4.23.10"
+    "react": "19.2.5"
   },
   "devDependencies": {
     "typescript": "6.0.3",
     "@types/node": "25.6.0",
-    "@types/react": "19.2.14"
+    "@types/react": "19.2.14",
+    "esbuild": "0.28.0",
+    "tsx": "4.23.10"
   }
 }

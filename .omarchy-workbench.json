@@ -20,6 +20,14 @@
       "required": true
     },
     {
+      "name": "node",
+      "argv": [
+        "node",
+        "--version"
+      ],
+      "required": true
+    },
+    {
       "name": "python",
       "argv": [
         "python3",

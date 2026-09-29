@@ -10,8 +10,12 @@
 - Renderer: selected MIT pdfcn components + pinned Forme, embedded DejaVu fonts.
 - Commands: Node.js for JSON helper; Qt's external URL opener for the PDF viewer.
   No shell command interpolation. No plugin install hooks or privileged actions.
-- Dependencies: Node.js 22+, npm setup, default PDF viewer; no credentials/endpoints
-  during normal use. npm registry is contacted only during explicit setup/update.
+- Dependencies: Node.js 22+ and default PDF viewer. React, Forme, WASM and fonts
+  ship in the repository. npm is used only by developers and CI to rebuild;
+  install, update and rendering do not run a package manager or fetch assets.
+- Distribution: readable ESM bundle plus Forme CJS/WASM in `dist/`, with upstream
+  licences and source/asset SHA-256 hashes. CI rejects stale output and verifies
+  operation without node_modules, npm or tsx. Node itself remains a host runtime.
 - Boundary: invoice content is JSON sent over stdin, not executable templates or
   command-line arguments. No arbitrary user font/image/template URLs are accepted.
 - Limits: 100 lines, bounded text/decimals, 256 KiB helper request, 45s operation
@@ -23,4 +27,4 @@
 - Close: visible close/Escape prompts for unsaved edits. Host hide releases focus
   and keeps memory; shell restart loses unsaved edits. Saved drafts survive removal.
 - Deferred: customer book, logos, quotes, status ledger, in-panel PDF preview,
-  packaging into a system helper package and marketplace publication.
+  marketplace publication.

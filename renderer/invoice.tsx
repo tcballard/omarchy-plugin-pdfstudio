@@ -5,7 +5,7 @@ import {professionalTheme} from './vendor/registry/themes/professional';
 const theme=structuredClone(professionalTheme);
 theme.typography.body.fontFamily='DejaVu Sans';
 theme.typography.heading.fontFamily='DejaVu Sans';
-const fonts=[{family:'DejaVu Sans',src:fileURLToPath(new URL('./fonts/DejaVuSans.ttf',import.meta.url))},{family:'DejaVu Sans',src:fileURLToPath(new URL('./fonts/DejaVuSans-Bold.ttf',import.meta.url)),fontWeight:700}];
+const fonts=[{family:'DejaVu Sans',src:fileURLToPath(new URL('../renderer/fonts/DejaVuSans.ttf',import.meta.url))},{family:'DejaVu Sans',src:fileURLToPath(new URL('../renderer/fonts/DejaVuSans-Bold.ttf',import.meta.url)),fontWeight:700}];
 import {Text} from './vendor/registry/bases/forme/components/text/text';
 import {PageHeader} from './vendor/registry/bases/forme/components/page-header/page-header';
 import {PdfcnThemeProvider} from './vendor/registry/bases/forme/components/theme-provider';

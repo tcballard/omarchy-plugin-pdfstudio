@@ -81,13 +81,13 @@ Item {
     id: worker
     property string action: ""
     property string payload: ""
-    command: ["node", root.basePath + "renderer/run.mjs"]
+    command: ["node", root.basePath + "dist/renderer.mjs"]
     stdinEnabled: true
     onStarted: { write(payload + "\n"); payload="" }
     stdout: StdioCollector {
       onStreamFinished: {
         var response
-        try {response=JSON.parse(text)} catch(e) {root.status="Helper failed. Run npm ci in the installed plugin directory and try again.";root.pendingAction="";return}
+        try {response=JSON.parse(text)} catch(e) {root.status="Renderer unavailable. Check Node.js 22+ is available and update the plugin if bundled files are missing.";root.pendingAction="";return}
         if(!response.ok) {root.status=response.error;root.pendingAction="";return}
         if(response.total) root.totalLabel="Subtotal: "+response.subtotal+" · Tax: "+response.tax+" · Total: "+response.total
         if(response.draft) root.setDoc(response.draft)
@@ -100,7 +100,7 @@ Item {
       }
     }
     onExited: function(code, exitStatus) {
-      if(code!==0 && root.status==="Working…") root.status="Helper failed. Check that Node.js and renderer dependencies are installed."
+      if(code!==0 && root.status==="Working…") root.status="Helper failed. Check that Node.js 22+ is available to the shell."
     }
   }
   Timer {
