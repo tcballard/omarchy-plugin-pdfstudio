@@ -15,6 +15,8 @@ Item {
   property bool opened: false
   property var doc: null
   property var drafts: []
+  property int draftOffset: 0
+  property int draftTotal: 0
   property bool dirty: false
   property string status: ""
   property string outputPath: ""
@@ -54,10 +56,13 @@ Item {
     dirty=false; outputPath="";totalLabel=""
   }
   function edit(key,value) { doc[key]=value; dirty=true; outputPath="";totalLabel="" }
-  function request(action) {
+  function request(action, offset) {
     if (busy) return
     worker.action=action
-    worker.payload=JSON.stringify({action:action,draft:doc ? snapshot() : null})
+    worker.payload=JSON.stringify({action:action,
+      draft:(action==="save" || action==="total" || action==="preview" || action==="export") && doc ? snapshot() : null,
+      id:action==="load" && pendingIndex>=0 ? drafts[pendingIndex].id : null,
+      offset:offset === undefined ? draftOffset : offset})
     status=action === "export" || action === "preview" ? "Rendering PDF…" : "Working…"
     worker.running=true
   }
@@ -70,7 +75,7 @@ Item {
   function perform(action) {
     if(action==="close") close()
     else if(action==="new") request("new")
-    else if(action==="load" && pendingIndex>=0) {setDoc(drafts[pendingIndex]);status="Draft opened"}
+    else if(action==="load" && pendingIndex>=0) request("load")
   }
   function savedAction(action) {
     if(dirty || !doc.number) {pendingAction=action;request("save")}
@@ -89,9 +94,9 @@ Item {
         var response
         try {response=JSON.parse(text)} catch(e) {root.status="Renderer unavailable. Check Node.js 22+ is available and update the plugin if bundled files are missing.";root.pendingAction="";return}
         if(!response.ok) {root.status=response.error;root.pendingAction="";return}
-        if(response.total) root.totalLabel="Subtotal: "+response.subtotal+" · Tax: "+response.tax+" · Total: "+response.total
+        if(worker.action === "total" && response.total) root.totalLabel="Subtotal: "+response.subtotal+" · Tax: "+response.tax+" · Total: "+response.total
         if(response.draft) root.setDoc(response.draft)
-        if(response.drafts) root.drafts=response.drafts
+        if(response.drafts) {root.drafts=response.drafts;root.draftOffset=response.offset;root.draftTotal=response.total}
         if(response.path) {
           root.outputPath=response.path
           root.status=worker.action === "preview" ? "Preview ready — open it below." : "PDF exported — open it below."
@@ -111,7 +116,7 @@ Item {
         var next=root.pendingAction;root.pendingAction=""
         if(next==="preview" || next==="export") root.request(next)
         else root.perform(next)
-      } else root.request("list")
+      } else root.request("list",0)
     }
   }
   Timer {interval:50000;running:worker.running;onTriggered:{worker.running=false;root.pendingAction="";root.status="Operation timed out. Reopen the saved draft to check whether the save completed."}}
@@ -159,9 +164,11 @@ Item {
           Button {text:"New invoice";onClicked:root.transition("new")}
           ComboBox {
             id: draftPicker; Layout.fillWidth:true;model:root.drafts;textRole:"number"
-            displayText:root.drafts.length ? "Saved drafts ("+root.drafts.length+")" : "No saved drafts yet"
+            displayText:root.draftTotal ? "Saved drafts ("+(root.draftOffset+1)+"–"+(root.draftOffset+root.drafts.length)+" of "+root.draftTotal+")" : "No saved drafts yet"
             onActivated:function(index) {root.transition("load",index)}
           }
+          Button {text:"Previous";enabled:root.draftOffset>0;onClicked:root.request("list",root.draftOffset-50)}
+          Button {text:"Next";enabled:root.draftOffset+50<root.draftTotal;onClicked:root.request("list",root.draftOffset+50)}
           Label {text:root.dirty?"Unsaved changes":"";color:Color.popups.text}
           Button {text:"Save draft";enabled:root.doc!==null;onClicked:root.request("save")}
         }

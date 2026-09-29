@@ -18,7 +18,7 @@ export function decimal(value: string, places: number, label: string): bigint {
 export function validate(input: unknown, complete=false): Invoice {
   if (!input || typeof input !== 'object') throw Error('Invalid invoice.');
   const d = input as Invoice;
-  if (!/^[0-9a-f-]{36}$/.test(d.id) || !Number.isSafeInteger(d.revision) || d.revision<0) throw Error('Invalid draft identity.');
+  if (typeof d.id!=='string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(d.id) || !Number.isSafeInteger(d.revision) || d.revision<0) throw Error('Invalid draft identity.');
   for (const k of ['number','date','due','company','companyAddress','customer','customerAddress','currency','taxRate','payment','notes'] as const) {
     if (typeof d[k] !== 'string' || d[k].length > (['companyAddress','customerAddress','payment','notes'].includes(k)?500:100)) throw Error(`Invalid ${k}.`);
   }
@@ -36,7 +36,10 @@ export function validate(input: unknown, complete=false): Invoice {
   if (complete && (!d.company.trim() || !d.customer.trim())) throw Error('Add your business and customer names.');
   const result=totals(d);
   if (result.total>99999999999n) throw Error('Invoice exceeds the supported total.');
-  return d;
+  return {id:d.id,revision:d.revision,number:d.number,date:d.date,due:d.due,
+    company:d.company,companyAddress:d.companyAddress,customer:d.customer,customerAddress:d.customerAddress,
+    currency:d.currency,taxRate:d.taxRate,payment:d.payment,notes:d.notes,
+    items:d.items.map(({description,quantity,price})=>({description,quantity,price}))};
 }
 export function totals(d: Invoice) {
   const lines=d.items.map(x=>(decimal(x.quantity,3,'Quantity')*decimal(x.price,2,'Price')+500n)/1000n);

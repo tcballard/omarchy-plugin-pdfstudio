@@ -1,4 +1,4 @@
-import {createInterface} from 'node:readline';
+import {requestLine} from './io';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {homedir} from 'node:os';
@@ -9,13 +9,12 @@ import {fresh,validate,totals,money} from './model';
 // One JSON request on stdin. No shell evaluation, web server or network requests.
 process.umask(0o077);
 const timer=setTimeout(()=>{console.log(JSON.stringify({ok:false,error:'Operation timed out.'}));process.exit(1);},45000);
-const lines=createInterface({input:process.stdin});
 try {
-  for await (const line of lines) {
-    if(line.length>262144) throw Error('Request is too large.');
+    const line=await requestLine(process.stdin);
     const r=JSON.parse(line);const store=new Store();let result;
     switch(r.action) {
-      case 'list':result={drafts:(await store.read()).drafts};break;
+      case 'list':result=await store.list(r.offset ?? 0);break;
+      case 'load':result={draft:await store.load(r.id)};break;
       case 'new':result={draft:fresh()};break;
       case 'save':result={draft:await store.save(r.draft)};break;
       case 'total':{const d=validate(r.draft);const t=totals(d);result={total:money(t.total,d.currency),subtotal:money(t.subtotal,d.currency),tax:money(t.tax,d.currency)};break;}
@@ -31,7 +30,6 @@ try {
       }
       default:throw Error('Unknown action.');
     }
-    console.log(JSON.stringify({ok:true,...result}));break;
-  }
+    console.log(JSON.stringify({ok:true,...result}));
 } catch(e:any) {console.log(JSON.stringify({ok:false,error:e.message||'Operation failed.'}));process.exitCode=1;}
-finally {clearTimeout(timer);lines.close();process.stdin.destroy();}
+finally {clearTimeout(timer);process.stdin.destroy();}

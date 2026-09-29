@@ -55,7 +55,7 @@ function decimal(value, places, label) {
 function validate(input, complete = false) {
   if (!input || typeof input !== "object") throw Error("Invalid invoice.");
   const d = input;
-  if (!/^[0-9a-f-]{36}$/.test(d.id) || !Number.isSafeInteger(d.revision) || d.revision < 0) throw Error("Invalid draft identity.");
+  if (typeof d.id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(d.id) || !Number.isSafeInteger(d.revision) || d.revision < 0) throw Error("Invalid draft identity.");
   for (const k of ["number", "date", "due", "company", "companyAddress", "customer", "customerAddress", "currency", "taxRate", "payment", "notes"]) {
     if (typeof d[k] !== "string" || d[k].length > (["companyAddress", "customerAddress", "payment", "notes"].includes(k) ? 500 : 100)) throw Error(`Invalid ${k}.`);
   }
@@ -73,13 +73,28 @@ function validate(input, complete = false) {
   if (complete && (!d.company.trim() || !d.customer.trim())) throw Error("Add your business and customer names.");
   const result = totals(d);
   if (result.total > 99999999999n) throw Error("Invoice exceeds the supported total.");
-  return d;
+  return {
+    id: d.id,
+    revision: d.revision,
+    number: d.number,
+    date: d.date,
+    due: d.due,
+    company: d.company,
+    companyAddress: d.companyAddress,
+    customer: d.customer,
+    customerAddress: d.customerAddress,
+    currency: d.currency,
+    taxRate: d.taxRate,
+    payment: d.payment,
+    notes: d.notes,
+    items: d.items.map(({ description, quantity, price }) => ({ description, quantity, price }))
+  };
 }
 function totals(d) {
-  const lines2 = d.items.map((x) => (decimal(x.quantity, 3, "Quantity") * decimal(x.price, 2, "Price") + 500n) / 1000n);
-  const subtotal = lines2.reduce((a, b) => a + b, 0n);
+  const lines = d.items.map((x) => (decimal(x.quantity, 3, "Quantity") * decimal(x.price, 2, "Price") + 500n) / 1000n);
+  const subtotal = lines.reduce((a, b) => a + b, 0n);
   const tax = (subtotal * decimal(d.taxRate, 2, "Tax rate") + 5000n) / 10000n;
-  return { lines: lines2, subtotal, tax, total: subtotal + tax };
+  return { lines, subtotal, tax, total: subtotal + tax };
 }
 function money(value, currency) {
   return `${currency} ${value / 100n}.${String(value % 100n).padStart(2, "0")}`;
@@ -3713,11 +3728,11 @@ function svgChildrenToString(children) {
       const name = svgCamelToKebab[k] ?? k;
       return `${name}="${escapeXmlAttr(String(v))}"`;
     }).join(" ");
-    const open2 = attrStr ? `<${tag} ${attrStr}` : `<${tag}`;
+    const open3 = attrStr ? `<${tag} ${attrStr}` : `<${tag}`;
     if (nested) {
-      result += `${open2}>${svgChildrenToString(nested)}</${tag}>`;
+      result += `${open3}>${svgChildrenToString(nested)}</${tag}>`;
     } else {
-      result += `${open2}/>`;
+      result += `${open3}/>`;
     }
   });
   return result;
@@ -4121,7 +4136,7 @@ var init_extract = __esm({
 
 // node_modules/@formepdf/core/dist/index.js
 import { render_pdf as wasmRenderPdf } from "./forme.cjs";
-import { readFile as readFile2 } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 function uint8ArrayToBase64(bytes) {
   return Buffer.from(bytes).toString("base64");
@@ -4134,7 +4149,7 @@ async function resolveFonts(doc) {
     if (font.src instanceof Uint8Array) {
       font.src = uint8ArrayToBase64(font.src);
     } else if (typeof font.src === "string" && !font.src.startsWith("data:")) {
-      const bytes = await readFile2(resolve(font.src));
+      const bytes = await readFile(resolve(font.src));
       font.src = uint8ArrayToBase64(new Uint8Array(bytes));
     }
   }
@@ -5080,8 +5095,47 @@ var init_invoice = __esm({
   }
 });
 
+// renderer/io.ts
+import { open } from "node:fs/promises";
+import { constants } from "node:fs";
+var MAX_REQUEST_BYTES = 256 * 1024;
+async function requestLine(input) {
+  const chunks = [];
+  let size = 0;
+  for await (const value of input) {
+    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    const newline = chunk.indexOf(10);
+    const part = newline < 0 ? chunk : chunk.subarray(0, newline);
+    size += part.length;
+    if (size > MAX_REQUEST_BYTES) throw Error("Request is too large.");
+    chunks.push(part);
+    if (newline >= 0) return Buffer.concat(chunks, size).toString("utf8");
+  }
+  if (!size) throw Error("No request received.");
+  return Buffer.concat(chunks, size).toString("utf8");
+}
+async function readBounded(path, limit) {
+  const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    const info = await file.stat();
+    if (!info.isFile() || info.size > limit) throw Error("Draft storage exceeds the supported size or is not a regular file.");
+    const chunks = [];
+    let size = 0;
+    while (true) {
+      const buffer = Buffer.alloc(Math.min(65536, limit + 1 - size));
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, null);
+      if (!bytesRead) break;
+      size += bytesRead;
+      if (size > limit) throw Error("Draft storage exceeds the supported size.");
+      chunks.push(buffer.subarray(0, bytesRead));
+    }
+    return Buffer.concat(chunks, size).toString("utf8");
+  } finally {
+    await file.close();
+  }
+}
+
 // renderer/cli.ts
-import { createInterface } from "node:readline";
 import { mkdir as mkdir2, writeFile as writeFile2 } from "node:fs/promises";
 import { join as join2 } from "node:path";
 import { homedir as homedir2 } from "node:os";
@@ -5089,10 +5143,55 @@ import { randomUUID as randomUUID3 } from "node:crypto";
 
 // renderer/store.ts
 init_model();
-import { mkdir, readFile, writeFile, rename, open, unlink } from "node:fs/promises";
+import { mkdir, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID as randomUUID2 } from "node:crypto";
+
+// renderer/lock.ts
+import { open as open2 } from "node:fs/promises";
+import { spawn } from "node:child_process";
+async function acquireLock(path) {
+  const file = await open2(path, "a", 384);
+  await file.close();
+  const child = spawn("/usr/bin/flock", [
+    "--exclusive",
+    "--nonblock",
+    path,
+    process.execPath,
+    "-e",
+    "process.stdin.resume();process.stdout.write('locked\\n');"
+  ], { stdio: ["pipe", "pipe", "ignore"] });
+  let failure;
+  child.stdin.on("error", () => {
+  });
+  const exited = new Promise((resolve2) => {
+    child.once("error", (e) => {
+      failure = e;
+      resolve2();
+    });
+    child.once("exit", () => resolve2());
+  });
+  try {
+    await new Promise((resolve2, reject) => {
+      child.stdout.once("data", () => resolve2());
+      void exited.then(() => reject(failure || Error("Draft storage is locked. Another save may be running; retry shortly.")));
+    });
+  } catch (e) {
+    child.stdin.end();
+    await exited;
+    throw e;
+  }
+  return async () => {
+    child.stdin.end();
+    await exited;
+  };
+}
+
+// renderer/store.ts
+var MAX_STORE_BYTES = 16 * 1024 * 1024;
+var MAX_DRAFTS = 1e3;
+var PAGE_SIZE = 50;
 var Store = class {
   constructor(directory = join(process.env.XDG_DATA_HOME || join(homedir(), ".local/share"), "omarchy-pdf-studio")) {
     this.directory = directory;
@@ -5100,24 +5199,31 @@ var Store = class {
   directory;
   async read() {
     try {
-      const s = JSON.parse(await readFile(join(this.directory, "drafts.json"), "utf8"));
-      if (s.schema !== 1 || !Number.isSafeInteger(s.next) || s.next < 1 || !Array.isArray(s.drafts)) throw Error("Invalid data format.");
-      s.drafts.forEach((d) => validate(d));
-      return s;
+      const s = JSON.parse(await readBounded(join(this.directory, "drafts.json"), MAX_STORE_BYTES));
+      if (!s || s.schema !== 1 || !Number.isSafeInteger(s.next) || s.next < 1 || s.next >= Number.MAX_SAFE_INTEGER || !Array.isArray(s.drafts) || s.drafts.length > MAX_DRAFTS) throw Error("Invalid data format.");
+      const drafts = s.drafts.map((d) => validate(d));
+      if (new Set(drafts.map((d) => d.id)).size !== drafts.length || new Set(drafts.map((d) => d.number)).size !== drafts.length) throw Error("Duplicate draft identities or invoice numbers.");
+      return { schema: 1, next: s.next, drafts };
     } catch (e) {
       if (e.code === "ENOENT") return { schema: 1, next: 1, drafts: [] };
       throw Error("Cannot read saved drafts. Your data has not been overwritten. " + e.message);
     }
   }
+  async list(offset = 0) {
+    if (typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0 || offset >= MAX_DRAFTS || offset % PAGE_SIZE !== 0) throw Error("Invalid draft page.");
+    const { drafts } = await this.read();
+    return { drafts: drafts.slice(offset, offset + PAGE_SIZE).map(({ id, number }) => ({ id, number })), offset, total: drafts.length };
+  }
+  async load(id) {
+    if (typeof id !== "string" || id.length !== 36) throw Error("Invalid draft identity.");
+    const d = (await this.read()).drafts.find((d2) => d2.id === id);
+    if (!d) throw Error("Draft no longer exists. Refresh the saved drafts.");
+    return d;
+  }
   async save(input) {
     const d = structuredClone(validate(input));
     await mkdir(this.directory, { recursive: true, mode: 448 });
-    let lock;
-    try {
-      lock = await open(join(this.directory, "write.lock"), "wx", 384);
-    } catch {
-      throw Error("Draft storage is locked. Another save may be running; retry shortly.");
-    }
+    const release = await acquireLock(join(this.directory, "write.lock"));
     try {
       const state = await this.read();
       const index = state.drafts.findIndex((x) => x.id === d.id);
@@ -5128,12 +5234,17 @@ var Store = class {
         } while (state.drafts.some((x) => x.number === d.number));
       }
       if (state.drafts.some((x) => x.id !== d.id && x.number === d.number)) throw Error("That invoice number is already used by another draft.");
+      if (index < 0 && state.drafts.length >= MAX_DRAFTS) throw Error("Draft storage supports at most 1000 invoices. Existing drafts can still be edited.");
+      if (state.next >= Number.MAX_SAFE_INTEGER) throw Error("Invoice numbering limit reached.");
+      if (d.revision >= Number.MAX_SAFE_INTEGER) throw Error("Draft revision limit reached.");
       d.revision++;
       if (index < 0) state.drafts.unshift(d);
       else state.drafts[index] = d;
+      const json = JSON.stringify(state);
+      if (Buffer.byteLength(json) > MAX_STORE_BYTES) throw Error("Draft storage exceeds the 16 MiB limit. Your data has not been overwritten.");
       const temp = join(this.directory, `.drafts-${randomUUID2()}.tmp`);
       try {
-        await writeFile(temp, JSON.stringify(state, null, 2), { mode: 384 });
+        await writeFile(temp, json, { flag: "wx", mode: 384 });
         await rename(temp, join(this.directory, "drafts.json"));
       } finally {
         await unlink(temp).catch(() => {
@@ -5141,8 +5252,7 @@ var Store = class {
       }
       return d;
     } finally {
-      await lock.close();
-      await unlink(join(this.directory, "write.lock"));
+      await release();
     }
   }
 };
@@ -5154,53 +5264,51 @@ var timer = setTimeout(() => {
   console.log(JSON.stringify({ ok: false, error: "Operation timed out." }));
   process.exit(1);
 }, 45e3);
-var lines = createInterface({ input: process.stdin });
 try {
-  for await (const line of lines) {
-    if (line.length > 262144) throw Error("Request is too large.");
-    const r = JSON.parse(line);
-    const store = new Store();
-    let result;
-    switch (r.action) {
-      case "list":
-        result = { drafts: (await store.read()).drafts };
-        break;
-      case "new":
-        result = { draft: fresh() };
-        break;
-      case "save":
-        result = { draft: await store.save(r.draft) };
-        break;
-      case "total": {
-        const d = validate(r.draft);
-        const t = totals(d);
-        result = { total: money(t.total, d.currency), subtotal: money(t.subtotal, d.currency), tax: money(t.tax, d.currency) };
-        break;
-      }
-      case "preview":
-      case "export": {
-        const d = validate(r.draft, true);
-        if (!d.number) throw Error("Save this draft to assign its invoice number first.");
-        const { renderInvoice: renderInvoice2 } = await Promise.resolve().then(() => (init_invoice(), invoice_exports));
-        const bytes = await renderInvoice2(d);
-        const dir = r.action === "preview" ? join2(process.env.XDG_CACHE_HOME || join2(homedir2(), ".cache"), "omarchy-pdf-studio") : join2(homedir2(), "Documents", "PDF Studio");
-        await mkdir2(dir, { recursive: true, mode: 448 });
-        const path = join2(dir, `invoice-${d.id}-${randomUUID3()}.pdf`);
-        await writeFile2(path, bytes, { flag: "wx", mode: 384 });
-        result = { path };
-        break;
-      }
-      default:
-        throw Error("Unknown action.");
+  const line = await requestLine(process.stdin);
+  const r = JSON.parse(line);
+  const store = new Store();
+  let result;
+  switch (r.action) {
+    case "list":
+      result = await store.list(r.offset ?? 0);
+      break;
+    case "load":
+      result = { draft: await store.load(r.id) };
+      break;
+    case "new":
+      result = { draft: fresh() };
+      break;
+    case "save":
+      result = { draft: await store.save(r.draft) };
+      break;
+    case "total": {
+      const d = validate(r.draft);
+      const t = totals(d);
+      result = { total: money(t.total, d.currency), subtotal: money(t.subtotal, d.currency), tax: money(t.tax, d.currency) };
+      break;
     }
-    console.log(JSON.stringify({ ok: true, ...result }));
-    break;
+    case "preview":
+    case "export": {
+      const d = validate(r.draft, true);
+      if (!d.number) throw Error("Save this draft to assign its invoice number first.");
+      const { renderInvoice: renderInvoice2 } = await Promise.resolve().then(() => (init_invoice(), invoice_exports));
+      const bytes = await renderInvoice2(d);
+      const dir = r.action === "preview" ? join2(process.env.XDG_CACHE_HOME || join2(homedir2(), ".cache"), "omarchy-pdf-studio") : join2(homedir2(), "Documents", "PDF Studio");
+      await mkdir2(dir, { recursive: true, mode: 448 });
+      const path = join2(dir, `invoice-${d.id}-${randomUUID3()}.pdf`);
+      await writeFile2(path, bytes, { flag: "wx", mode: 384 });
+      result = { path };
+      break;
+    }
+    default:
+      throw Error("Unknown action.");
   }
+  console.log(JSON.stringify({ ok: true, ...result }));
 } catch (e) {
   console.log(JSON.stringify({ ok: false, error: e.message || "Operation failed." }));
   process.exitCode = 1;
 } finally {
   clearTimeout(timer);
-  lines.close();
   process.stdin.destroy();
 }
