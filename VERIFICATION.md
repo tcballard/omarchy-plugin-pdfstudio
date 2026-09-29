@@ -20,7 +20,12 @@ Passed:
   Timer and ListModel interfaces. Panel regressions cover both completion orders,
   nonzero/crashed exits, malformed and incomplete replies, timeout/late output,
   queued-action serialization, failed discard-and-load, host hide during save,
-  and discard/cancel behavior. These stubs do not verify Qt focus or host IPC.
+  and discard/cancel behavior. These JavaScript stubs do not verify Qt focus or host IPC.
+- `python3 tests/qml-popup.py` with Qt/PySide6 6.8.3: the actual Qt controls load
+  without QML warnings, the modal popup takes focus, Tab stays inside it, Ctrl+S
+  cannot bypass confirmation, and Escape cancels without losing edits. This
+  caught a popup shortcut-scope bug missed by the JavaScript tests. CI runs this
+  offscreen check with PySide6-Essentials; Quickshell and Wayland remain stubbed.
 - `npm run check:bundle`: rebuilt output exactly matches committed assets and
   the source/lockfile hashes. The check is now part of `./tests/run`.
 - Earlier packaging pass: a clean checkout at a different filesystem path

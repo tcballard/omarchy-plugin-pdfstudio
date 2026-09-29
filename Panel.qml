@@ -219,7 +219,7 @@ Item {
     exclusionMode: ExclusionMode.Ignore
     Pane {
       anchors.fill:parent;padding:0
-  Shortcut {sequence: "Escape";enabled:root.opened && !root.busy;onActivated:root.confirmAction!=="" ? root.confirmAction="" : root.transition("close")}
+  Shortcut {sequence: "Escape";enabled:root.opened && !root.busy && root.confirmAction==="";onActivated:root.transition("close")}
   Shortcut {sequence:"Ctrl+S";enabled:root.opened && !root.busy && root.doc!==null && root.confirmAction==="";onActivated:root.request("save")}
 
       background: Rectangle {radius:Style.cornerRadius;color:Color.popups.background;border.color:Color.popups.border;border.width:1}
@@ -318,6 +318,7 @@ Item {
         background:Rectangle {color:Color.popups.background;radius:Style.cornerRadius;border.color:Color.popups.border;border.width:1}
         contentItem:ColumnLayout {
           spacing:16
+          Shortcut {sequence:"Escape";enabled:confirmDialog.visible;onActivated:root.confirmAction=""}
           Label {text:"Save your changes?";font.pixelSize:22;color:Color.popups.text}
           Label {text:"This invoice has unsaved edits.";color:Color.popups.text}
           RowLayout {
