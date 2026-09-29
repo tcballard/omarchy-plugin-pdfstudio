@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.tcballard.pdf-studio",
+  "name": "PDF Studio",
+  "version": "0.1.0-dev",
+  "author": "Tom Ballard",
+  "license": "MIT",
+  "description": "Create invoices locally and export polished PDFs.",
+  "kinds": [
+    "panel"
+  ],
+  "entryPoints": {
+    "panel": "Panel.qml"
+  },
+  "keepLoaded": true
+}

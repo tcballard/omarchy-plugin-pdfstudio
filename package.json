@@ -1,0 +1,24 @@
+{
+  "name": "omarchy-plugin-pdf-studio",
+  "version": "0.1.0-dev",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --import tsx --test tests/*.test.ts",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit"
+  },
+  "dependencies": {
+    "@formepdf/core": "0.25.0",
+    "@formepdf/react": "0.25.0",
+    "react": "19.2.5",
+    "tsx": "4.23.10"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3",
+    "@types/node": "25.6.0",
+    "@types/react": "19.2.14"
+  }
+}

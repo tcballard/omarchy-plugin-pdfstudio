@@ -1,0 +1,32 @@
+{
+  "id": "b028fe41-3962-4a1a-9387-71e7fb3ccd91",
+  "revision": 0,
+  "number": "INV-00001",
+  "date": "2026-09-29",
+  "due": "2026-10-13",
+  "company": "Cotswold Design Studio",
+  "companyAddress": "12 Example Lane, Cheltenham · studio@example.test",
+  "customer": "Northbank Coffee",
+  "customerAddress": "28 Sample Street, London · accounts@example.test",
+  "currency": "GBP",
+  "taxRate": "20",
+  "payment": "Bank transfer · Sort code 00-00-00 · Account 00000000",
+  "notes": "Fictional demonstration invoice. Thank you for your business.",
+  "items": [
+    {
+      "description": "Brand identity and visual direction",
+      "quantity": "1",
+      "price": "850.00"
+    },
+    {
+      "description": "Website design and development",
+      "quantity": "12.5",
+      "price": "85.00"
+    },
+    {
+      "description": "Print-ready menu artwork",
+      "quantity": "2",
+      "price": "120.00"
+    }
+  ]
+}

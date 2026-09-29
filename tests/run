@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
+python3 scripts/validate_manifest.py "$root"
+node node_modules/typescript/bin/tsc --noEmit
+node --import tsx --test tests/*.test.ts
+if command -v qmlformat >/dev/null 2>&1; then qmlformat -n Panel.qml >/dev/null; fi
+if command -v omarchy >/dev/null 2>&1; then omarchy plugin validate "$root"; fi
