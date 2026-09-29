@@ -78,5 +78,11 @@ test('shipped designer works without node_modules and renders all block types an
   assert.ok((await readFile(fileURLToPath(pdf.previewUrl))).length>100);
   const exported=run({action:'designExport',document:saved});assert.equal(exported.ok,true);assert.ok(exported.path.startsWith(join(dir,'Documents','PDF Studio')));
   assert.equal(run({action:'designList'}).total,1);assert.equal(run({action:'designList',template:true}).total,1);
+  saved.schema=2;saved.layout='free';saved.pageCount=2;
+  saved.blocks=saved.blocks.filter((b:any)=>b.type!=='pageBreak').map((b:any,i:number)=>({...b,frame:{page:1,x:20+(i%2)*250,y:20+Math.floor(i/2)*150,width:220,height:120}}));
+  const free=run({action:'designSave',document:saved}).document;assert.equal(free.schema,2);
+  assert.deepEqual(run({action:'designLoad',id:free.id}).document.blocks,free.blocks);
+  const freePdf=run({action:'designPreview',document:free,page:2});assert.equal(freePdf.ok,true);assert.equal(freePdf.pages,2);assert.equal(freePdf.page,2);
+
  }finally{await rm(dir,{recursive:true,force:true});}
 });

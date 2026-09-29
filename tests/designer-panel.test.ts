@@ -10,13 +10,14 @@ const functions=[...qml.matchAll(/^  function /gm)].map(match=>{
  assert.ok(ts.isFunctionDeclaration(source.statements[0]));return source.statements[0].getText(source);
 }).join('\n');
 function panel(){
- const p:any={doc:null,opened:true,dirty:false,selectedIndex:-1,undoStack:[],redoStack:[],editGroup:'',types:BLOCK_TYPES,
+ const p:any={canvasPage:1,showPdf:false,assetBaseUrl:'',doc:null,opened:true,dirty:false,selectedIndex:-1,undoStack:[],redoStack:[],editGroup:'',types:BLOCK_TYPES,
   status:'',outputUrl:'',previewUrl:'',previewStale:false,previewPage:1,previewPages:1,entries:[],entryOffset:0,entryTotal:0,showTemplates:false,
   confirmAction:'',transitionArgs:{},queuedAction:'',queuedArgs:{},importTarget:'',inFlight:false,helperStarted:false,receivedOutput:false,receivedExit:false,responseText:'',responseCode:-1,responseExitStatus:-1,
   invoicesRequested(){p.switched=true;},imagePicker:{close(){}},coalesce:{restart(){}},
   worker:{action:'',payload:'',running:false,signal(){this.running=false;}},
   followup:{running:false,start(){this.running=true;},restart(){this.running=true;},stop(){this.running=false;}}
  };
+ Object.defineProperty(p,'freeLayout',{get:()=>p.doc?.layout==='free'});
  Object.defineProperty(p,'busy',{get:()=>p.inFlight||p.worker.running||p.followup.running});
  Object.defineProperty(p,'selected',{get:()=>p.doc?.blocks[p.selectedIndex]??null});p.root=p;
  vm.createContext(p);vm.runInContext(functions,p);p.setDoc(newDesign());return p;
@@ -56,4 +57,21 @@ test('switching to invoices saves first and host hide cancels queued navigation'
 test('import applies to its original block, is undoable and invalidates old PDF links',()=>{
  const p=panel();p.addBlock('image');p.importTarget=p.selected.id;p.addBlock('text');p.outputUrl='file:///old.pdf';p.request('designImport',{path:'file:///image.png'});
  output(p,{ok:true,asset:'a'.repeat(64)+'.png'});exit(p);assert.equal(p.doc.blocks[0].asset,'a'.repeat(64)+'.png');assert.equal(p.doc.blocks[1].type,'text');assert.equal(p.outputUrl,'');p.history(false);assert.equal(p.doc.blocks[0].asset,'');
+});
+
+test('free layout conversion, resizing and page changes stay in bounds and are undoable',()=>{
+ const p=panel();p.addBlock('heading');p.addBlock('text');p.addBlock('pageBreak');p.addBlock('columns');const flow=JSON.stringify(p.doc);
+ p.setLayout(true);assert.equal(p.freeLayout,true);assert.equal(p.doc.pageCount,2);validateDesign(p.doc);
+ p.history(false);assert.equal(JSON.stringify(p.doc),flow);p.history(true);
+ p.selectedIndex=0;p.commitFrame(0,999,-50,2000,80);validateDesign(p.doc);assert.equal(p.selected.frame.x,0);assert.equal(p.selected.frame.y,0);
+ p.pageEdit('orientation','landscape');validateDesign(p.doc);p.frameEdit('page',2);assert.equal(p.canvasPage,2);
+ p.nudge(10,10);validateDesign(p.doc);p.duplicateBlock();validateDesign(p.doc);
+ p.addPage();assert.equal(p.canvasPage,3);p.removeEmptyPage();assert.equal(p.doc.pageCount,2);
+ const before=JSON.stringify(p.doc);p.canvasPage=1;p.removeEmptyPage();assert.equal(JSON.stringify(p.doc),before);
+ p.setLayout(false);validateDesign(p.doc);assert.equal(p.doc.layout,undefined);p.history(false);assert.equal(p.doc.layout,'free');
+});
+test('layer operations preserve selection and make the last block frontmost',()=>{
+ const p=panel();p.addBlock('heading');p.addBlock('text');p.setLayout(true);p.selectedIndex=0;const id=p.selected.id;
+ p.moveLayer(true);assert.equal(p.selectedIndex,1);assert.equal(p.doc.blocks[1].id,id);p.moveLayer(false);assert.equal(p.selected.id,id);assert.equal(p.selectedIndex,0);
+ p.commitFrame(0,80,100,240,60);const count=p.undoStack.length;p.commitFrame(0,100,130,240,60);assert.equal(p.undoStack.length,count+1);p.history(false);assert.equal(p.selected.frame.x,80);
 });

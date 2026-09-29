@@ -49,4 +49,29 @@ No remote image URLs, executable templates or HTML are accepted. Images are copi
 by content hash with byte/pixel limits. Preview rasterization uses Poppler's
 `pdfinfo` and `pdftoppm` (optional for the inline preview; PDF export remains usable
 without them). Fonts and the PDF renderer remain bundled. Preview refresh is
-explicit, keeping typing responsive. Precise free-positioning is deferred.
+explicit, keeping typing responsive. Free positioning is implemented in the follow-up below.
+
+## Free layout
+
+The designer adds an opt-in free-layout mode, within the same hosted panel and
+helper protocol. Each block stores page, x/y and width/height in PDF points from
+the top-left of the physical page. Array order is back-to-front painting order.
+Frames are bounded to their page, with a 24 × 12 pt minimum; up to 50 explicit
+pages are supported. Changing page size/orientation clamps frames to the new page.
+Margins are guides only in this mode. Flow documents retain their existing schema
+and renderer; free documents require schema 2 to prevent old builds from stripping
+geometry. Both formats share the existing revision-checked document store.
+
+FreeCanvas.qml provides direct manipulation, a resize handle, optional 8 pt grid,
+fit/zoom, keyboard nudge and layer controls. A gesture commits once on release;
+cancelled gestures do not alter the document. PDF frames use absolute positioning
+and clipping, including for tables, columns and images. The editable Qt canvas is
+a layout guide; the explicit rendered preview remains the exact export reference.
+Blank pages are painted explicitly so Forme does not discard them. No runtime
+commands or dependencies are added. Native file imports remain local only.
+
+Validation covers schema and geometry bounds, template round-trips, conversions,
+undo, layer order, real Qt mouse events at multiple scales, and rendered PDF
+coordinates, page counts and raster pixels. Live Wayland pointer/focus and monitor
+behaviour still require an Omarchy device. Rotation, nested layouts, multi-select,
+grouping, automatic overflow warnings and live PDF rendering are deferred.

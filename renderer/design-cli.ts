@@ -12,9 +12,9 @@ const exec=promisify(execFile);
 export async function designRequest(r:any){
  const store=new DesignStore();
  switch(r.action){
-  case 'designNew':return {document:newDesign(r.preset??'blank')};
+  case 'designNew':return {document:newDesign(r.preset??'blank'),assetBaseUrl:pathToFileURL(join(store.directory,'assets')+'/').href};
   case 'designList':return store.list(r.template??false,r.offset??0);
-  case 'designLoad':return {document:await store.load(r.id)};
+  case 'designLoad':return {document:await store.load(r.id),assetBaseUrl:pathToFileURL(join(store.directory,'assets')+'/').href};
   case 'designSave':return {document:await store.save(r.document)};
   case 'designTemplate':return {template:await store.template(r.document)};
   case 'designUseTemplate':return {document:await store.useTemplate(r.id)};

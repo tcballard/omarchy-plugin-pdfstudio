@@ -262,16 +262,30 @@ function choice(v, options, label) {
 }
 function validateDesign(input, complete = false) {
   const d = input;
-  if (!d || d.schema !== 1 || typeof d.id !== "string" || !UUID.test(d.id) || !Number.isSafeInteger(d.revision) || d.revision < 0 || typeof d.template !== "boolean") throw Error("Invalid document identity.");
+  if (!d || ![1, 2].includes(d.schema) || typeof d.id !== "string" || !UUID.test(d.id) || !Number.isSafeInteger(d.revision) || d.revision < 0 || typeof d.template !== "boolean") throw Error("Invalid document identity.");
   if (!d.page || !Array.isArray(d.blocks) || d.blocks.length > 80) throw Error("Use at most 80 blocks.");
   const title = text(d.title, 100, "Document title");
   if (!title.trim()) throw Error("Give the document a title.");
   const page = { size: choice(d.page.size, ["A4", "Letter"], "page size"), orientation: choice(d.page.orientation, ["portrait", "landscape"], "orientation"), margin: num(d.page.margin, 16, 100, "page margin"), background: color(d.page.background) };
+  const layout = d.layout === void 0 ? "flow" : choice(d.layout, ["flow", "free"], "layout");
+  if (layout === "free" && d.schema !== 2 || layout === "flow" && d.schema !== 1) throw Error("Unsupported document layout version.");
+  const pageCount = layout === "free" ? num(d.pageCount, 1, 50, "page count") : 1;
+  if (!Number.isInteger(pageCount)) throw Error("Invalid page count.");
+  let [pw, ph] = page.size === "A4" ? [595.28, 841.89] : [612, 792];
+  if (page.orientation === "landscape") [pw, ph] = [ph, pw];
   const blocks = d.blocks.map((b) => {
     if (!b || typeof b.id !== "string" || !UUID.test(b.id)) throw Error("Invalid block identity.");
     const type = choice(b.type, BLOCK_TYPES, "block type");
     if (typeof b.bold !== "boolean") throw Error("Invalid font weight.");
     const out = { id: b.id, type, font: choice(b.font, ["sans", "serif", "mono"], "font"), size: num(b.size, 8, 48, "font size"), bold: b.bold, color: color(b.color), align: choice(b.align, ["left", "center", "right"], "alignment"), spacing: num(b.spacing, 0, 60, "block spacing") };
+    if (layout === "free") {
+      if (type === "pageBreak") throw Error("Free layout uses explicit pages, not page-break blocks.");
+      const f = b.frame;
+      if (!f) throw Error("Every free-layout block needs a frame.");
+      const frame = { page: num(f.page, 1, pageCount, "block page"), x: num(f.x, 0, pw, "horizontal position"), y: num(f.y, 0, ph, "vertical position"), width: num(f.width, 24, pw, "frame width"), height: num(f.height, 12, ph, "frame height") };
+      if (!Number.isInteger(frame.page) || frame.x + frame.width > pw + 1e-3 || frame.y + frame.height > ph + 1e-3) throw Error("Keep each block frame inside its page.");
+      out.frame = frame;
+    }
     if (type === "heading" || type === "text") out.text = text(b.text, 4e3, "Block text");
     if (type === "columns") {
       out.left = text(b.left, 4e3, "Left column");
@@ -300,7 +314,7 @@ function validateDesign(input, complete = false) {
   });
   if (new Set(blocks.map((b) => b.id)).size !== blocks.length) throw Error("Duplicate block identities.");
   if (blocks.filter((b) => b.type === "image").length > 8) throw Error("Use at most 8 images.");
-  const result = { schema: 1, id: d.id, revision: d.revision, title, template: d.template, page, blocks };
+  const result = { schema: d.schema, id: d.id, revision: d.revision, title, template: d.template, page, blocks, ...layout === "free" ? { layout, pageCount } : {} };
   if (Buffer.byteLength(JSON.stringify(result)) > 128 * 1024) throw Error("Document exceeds the 128 KiB content limit. Shorten some text or tables.");
   return result;
 }
@@ -4682,23 +4696,25 @@ async function renderDesign(input, directory) {
   if (d.page.orientation === "landscape") [width, height] = [height, width];
   const contentWidth = width - 2 * d.page.margin;
   function draw(b) {
-    const style = { fontFamily: families[b.font], fontSize: b.size, fontWeight: b.bold ? 700 : 400, color: b.color, textAlign: b.align, marginBottom: b.spacing };
+    const free = d.layout === "free", space = free ? 0 : b.spacing;
+    const style = { fontFamily: families[b.font], fontSize: b.size, fontWeight: b.bold ? 700 : 400, color: b.color, textAlign: b.align, marginBottom: space };
     if (b.type === "pageBreak") return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PageBreak, {}, b.id);
     if (b.type === "heading" || b.type === "text") return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { style, children: b.text || " " }, b.id);
-    if (b.type === "columns") return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(View, { style: { flexDirection: "row", marginBottom: b.spacing }, children: [
+    if (b.type === "columns") return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(View, { style: { flexDirection: "row", marginBottom: space }, children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(View, { style: { width: "50%", paddingRight: 10 }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { style: { ...style, marginBottom: 0 }, children: b.left || " " }) }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(View, { style: { width: "50%", paddingLeft: 10 }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { style: { ...style, marginBottom: 0 }, children: b.right || " " }) })
     ] }, b.id);
-    if (b.type === "divider") return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(View, { style: { height: b.height, backgroundColor: b.color, marginBottom: b.spacing } }, b.id);
-    if (b.type === "spacer") return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(View, { style: { height: b.height, marginBottom: b.spacing } }, b.id);
-    if (b.type === "table") return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Table, { columns: b.rows[0].map(() => ({ width: { fraction: 1 / b.rows[0].length } })), style: { marginBottom: b.spacing }, children: b.rows.map((row, i) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Row, { header: b.header && i === 0, style: { backgroundColor: b.header && i === 0 ? "#edf0f3" : d.page.background }, children: row.map((cell, j) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Cell, { style: { padding: 7, borderWidth: 0.5, borderColor: "#c7ccd1" }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { style: { ...style, marginBottom: 0, fontWeight: b.header && i === 0 ? 700 : style.fontWeight }, children: cell || " " }) }, j)) }, i)) }, b.id);
+    if (b.type === "divider") return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(View, { style: { height: free ? b.frame.height : b.height, backgroundColor: b.color, marginBottom: space } }, b.id);
+    if (b.type === "spacer") return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(View, { style: { height: b.height, marginBottom: space } }, b.id);
+    if (b.type === "table") return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Table, { columns: b.rows[0].map(() => ({ width: { fraction: 1 / b.rows[0].length } })), style: { marginBottom: space }, children: b.rows.map((row, i) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Row, { header: b.header && i === 0, style: { backgroundColor: b.header && i === 0 ? "#edf0f3" : d.page.background }, children: row.map((cell, j) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Cell, { style: { padding: 7, borderWidth: 0.5, borderColor: "#c7ccd1" }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { style: { ...style, marginBottom: 0, fontWeight: b.header && i === 0 ? 700 : style.fontWeight }, children: cell || " " }) }, j)) }, i)) }, b.id);
     if (b.type === "image") {
-      const image = images.get(b.asset), limitWidth = contentWidth * b.width / 100;
-      const scale = Math.min(limitWidth / image.width, Math.min(b.height, height - 2 * d.page.margin - b.spacing) / image.height), w = image.width * scale, h = image.height * scale;
-      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(View, { wrap: false, style: { marginBottom: b.spacing, alignItems: b.align === "center" ? "center" : b.align === "right" ? "flex-end" : "flex-start" }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Image, { src: image.src, width: w, height: h, alt: b.text }) }, b.id);
+      const image = images.get(b.asset), limitWidth = free ? b.frame.width : contentWidth * b.width / 100;
+      const scale = Math.min(limitWidth / image.width, (free ? b.frame.height : Math.min(b.height, height - 2 * d.page.margin - b.spacing)) / image.height), w = image.width * scale, h = image.height * scale;
+      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(View, { wrap: false, style: { marginBottom: space, alignItems: b.align === "center" ? "center" : b.align === "right" ? "flex-end" : "flex-start" }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Image, { src: image.src, width: w, height: h, alt: b.text }) }, b.id);
     }
   }
-  const serialized = serialize2(/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Document, { title: d.title, fonts, style: { fontFamily: families.sans, fontSize: 11, color: "#18212b" }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Page, { size: { width, height }, margin: d.page.margin, style: { backgroundColor: d.page.background }, children: d.blocks.length ? d.blocks.map(draw) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { children: " " }) }) }));
+  const pages = d.layout === "free" ? Array.from({ length: d.pageCount }, (_, i) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Page, { size: { width, height }, margin: 0, style: { backgroundColor: d.page.background }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(View, { wrap: false, style: { width, height, position: "relative", overflow: "hidden", backgroundColor: d.page.background }, children: d.blocks.filter((b) => b.frame.page === i + 1).map((b) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(View, { wrap: false, style: { position: "absolute", left: b.frame.x, top: b.frame.y, width: b.frame.width, height: b.frame.height, overflow: "hidden" }, children: draw(b) }, b.id)) }) }, i)) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Page, { size: { width, height }, margin: d.page.margin, style: { backgroundColor: d.page.background }, children: d.blocks.length ? d.blocks.map(draw) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { children: " " }) });
+  const serialized = serialize2(/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Document, { title: d.title, fonts, style: { fontFamily: families.sans, fontSize: 11, color: "#18212b" }, children: pages }));
   const result = Buffer.from(await renderSerializedDoc(serialized));
   if (result.length > 48 * 1024 * 1024) throw Error("PDF exceeds 48 MiB. Use smaller images.");
   return result;
@@ -4736,11 +4752,11 @@ async function designRequest(r) {
   const store = new DesignStore();
   switch (r.action) {
     case "designNew":
-      return { document: newDesign(r.preset ?? "blank") };
+      return { document: newDesign(r.preset ?? "blank"), assetBaseUrl: pathToFileURL(join4(store.directory, "assets") + "/").href };
     case "designList":
       return store.list(r.template ?? false, r.offset ?? 0);
     case "designLoad":
-      return { document: await store.load(r.id) };
+      return { document: await store.load(r.id), assetBaseUrl: pathToFileURL(join4(store.directory, "assets") + "/").href };
     case "designSave":
       return { document: await store.save(r.document) };
     case "designTemplate":

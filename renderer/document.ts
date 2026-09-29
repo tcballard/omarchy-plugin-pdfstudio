@@ -1,12 +1,14 @@
 import {randomUUID} from 'node:crypto';
 export const BLOCK_TYPES=['heading','text','image','table','divider','spacer','columns','pageBreak'] as const;
 export type BlockType=typeof BLOCK_TYPES[number];
+export interface Frame {page:number;x:number;y:number;width:number;height:number}
 export interface Block {
+ frame?:Frame;
  id:string;type:BlockType;font:'sans'|'serif'|'mono';size:number;bold:boolean;color:string;align:'left'|'center'|'right';spacing:number;
  text?:string;left?:string;right?:string;rows?:string[][];header?:boolean;asset?:string;width?:number;height?:number;
 }
 export interface Design {
- schema:1;id:string;revision:number;title:string;template:boolean;
+ schema:1|2;id:string;revision:number;title:string;template:boolean;layout?:'flow'|'free';pageCount?:number;
  page:{size:'A4'|'Letter';orientation:'portrait'|'landscape';margin:number;background:string};blocks:Block[];
 }
 export function block(type:BlockType):Block {
@@ -34,15 +36,27 @@ function color(v:unknown):string {if(typeof v!=='string'||!/^#[0-9a-f]{6}$/i.tes
 function choice<T extends string>(v:unknown,options:readonly T[],label:string):T {if(!options.includes(v as T))throw Error(`Invalid ${label}.`);return v as T;}
 export function validateDesign(input:unknown,complete=false):Design {
  const d=input as Design;
- if(!d||d.schema!==1||typeof d.id!=='string'||!UUID.test(d.id)||!Number.isSafeInteger(d.revision)||d.revision<0||typeof d.template!=='boolean')throw Error('Invalid document identity.');
+ if(!d||![1,2].includes(d.schema)||typeof d.id!=='string'||!UUID.test(d.id)||!Number.isSafeInteger(d.revision)||d.revision<0||typeof d.template!=='boolean')throw Error('Invalid document identity.');
  if(!d.page||!Array.isArray(d.blocks)||d.blocks.length>80)throw Error('Use at most 80 blocks.');
  const title=text(d.title,100,'Document title');if(!title.trim())throw Error('Give the document a title.');
  const page={size:choice(d.page.size,['A4','Letter'],'page size'),orientation:choice(d.page.orientation,['portrait','landscape'],'orientation'),margin:num(d.page.margin,16,100,'page margin'),background:color(d.page.background)};
+ const layout=d.layout===undefined?'flow':choice(d.layout,['flow','free'],'layout');
+ if((layout==='free' && d.schema!==2)||(layout==='flow' && d.schema!==1))throw Error('Unsupported document layout version.');
+ const pageCount=layout==='free'?num(d.pageCount,1,50,'page count'):1;
+ if(!Number.isInteger(pageCount))throw Error('Invalid page count.');
+ let [pw,ph]=page.size==='A4'?[595.28,841.89]:[612,792];if(page.orientation==='landscape')[pw,ph]=[ph,pw];
  const blocks=d.blocks.map((b):Block=>{
   if(!b||typeof b.id!=='string'||!UUID.test(b.id))throw Error('Invalid block identity.');
   const type=choice(b.type,BLOCK_TYPES,'block type');
   if(typeof b.bold!=='boolean')throw Error('Invalid font weight.');
   const out:Block={id:b.id,type,font:choice(b.font,['sans','serif','mono'],'font'),size:num(b.size,8,48,'font size'),bold:b.bold,color:color(b.color),align:choice(b.align,['left','center','right'],'alignment'),spacing:num(b.spacing,0,60,'block spacing')};
+  if(layout==='free'){
+   if(type==='pageBreak')throw Error('Free layout uses explicit pages, not page-break blocks.');
+   const f=b.frame;if(!f)throw Error('Every free-layout block needs a frame.');
+   const frame:Frame={page:num(f.page,1,pageCount,'block page'),x:num(f.x,0,pw,'horizontal position'),y:num(f.y,0,ph,'vertical position'),width:num(f.width,24,pw,'frame width'),height:num(f.height,12,ph,'frame height')};
+   if(!Number.isInteger(frame.page)||frame.x+frame.width>pw+0.001||frame.y+frame.height>ph+0.001)throw Error('Keep each block frame inside its page.');
+   out.frame=frame;
+  }
   if(type==='heading'||type==='text')out.text=text(b.text,4000,'Block text');
   if(type==='columns'){out.left=text(b.left,4000,'Left column');out.right=text(b.right,4000,'Right column');}
   if(type==='image'){
@@ -60,7 +74,7 @@ export function validateDesign(input:unknown,complete=false):Design {
  });
  if(new Set(blocks.map(b=>b.id)).size!==blocks.length)throw Error('Duplicate block identities.');
  if(blocks.filter(b=>b.type==='image').length>8)throw Error('Use at most 8 images.');
- const result:Design={schema:1,id:d.id,revision:d.revision,title,template:d.template,page,blocks};
+ const result:Design={schema:d.schema,id:d.id,revision:d.revision,title,template:d.template,page,blocks,...(layout==='free'?{layout,pageCount}:{})};
  if(Buffer.byteLength(JSON.stringify(result))>128*1024)throw Error('Document exceeds the 128 KiB content limit. Shorten some text or tables.');
  return result;
 }

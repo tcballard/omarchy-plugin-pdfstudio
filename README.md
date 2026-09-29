@@ -17,6 +17,8 @@ PDF Studio brings document design to an Omarchy panel. Arrange text, images, tab
 - A native document designer with a block list, rendered page preview and properties.
 - Headings, text, PNG/JPEG images, tables, dividers, spacers, two text columns and page breaks.
 - Reorder, duplicate and remove blocks; undo/redo up to 30 changes.
+- Free layout: drag and resize blocks anywhere on a page, with layers, snapping,
+  zoom, keyboard nudging and exact position/size controls.
 - Sans, serif and monospace fonts; size, bold, colour, alignment and spacing.
 - A4/Letter pages, portrait/landscape orientation, margins and background colour.
 - Blank, letter, report and brochure starters, plus your own reusable templates.
@@ -30,9 +32,36 @@ PDF Studio brings document design to an Omarchy panel. Arrange text, images, tab
 Open PDF Studio and choose **New document**, or start adding blocks to the blank
 page. Select a block on the left to edit its content and appearance on the right.
 Use the arrows to change its order. Text flows down the page and continues onto
-new pages; this version does not offer drag-anywhere positioning or nested layouts.
+new pages in **Flow layout**. Choose **Free layout** in Page settings to place
+blocks yourself. Nested layouts are not supported yet.
 Two-column blocks contain two editable text areas. Tables support up to 40 rows
 and six columns, with an optional repeated header row.
+
+In **Free layout**, drag a block to move it and drag its lower-right handle to
+resize it. The inspector provides X, Y, width, height and page controls in points
+(72 pt = one inch), measured from the top-left of the page. **Snap 8 pt** enables
+grid snapping; the zoom selector enlarges the canvas with scrollbars. With canvas
+focus, arrow keys move the selected block by 1 pt, or 10 pt with Shift. Ctrl+Z
+undoes and Ctrl+Shift+Z redoes; each drag or resize is one undo step.
+
+The layer list runs back to front. **To back / To front** changes which block
+covers another. Use **+ Page** for another page, and the block's Page control to
+move it between pages. Empty pages can be removed; documents support 50 explicit
+pages. Margins are visual guides in free layout, so content can reach the edges.
+Images fit within their frames while retaining their proportions.
+
+**Content outside a free-layout frame is clipped in the PDF.** Resize the frame
+or shorten the content if needed. The canvas uses Qt text layout as an editing
+guide; **Refresh** shows the exact exported PDF, including font metrics and table
+layout. Use **Edit canvas / Show PDF** to switch views. Export always uses the
+current coordinates, even if the preview is stale.
+
+Converting an existing flowing document creates an initial arrangement of frames;
+check their sizes before exporting. Page-break blocks become explicit pages.
+Switching back to Flow orders blocks by page and position and removes their
+frames. Either conversion can be undone. Free-layout documents use format version
+2 so older designer builds reject them rather than silently erase positioning;
+existing version-1 flow documents continue to work.
 
 Choose **Refresh** to see the actual rendered PDF. The preview is marked stale
 after edits; refresh is explicit. **Export PDF** uses the current editor contents.
@@ -128,8 +157,8 @@ See [DESIGN.md](DESIGN.md) for boundaries and [VERIFICATION.md](VERIFICATION.md)
 for exact evidence and live checks still required. Preview PDFs are examples of
 renderer output, not screenshots of a running Omarchy panel.
 
-Still to build: drag-anywhere positioning, nested layouts, automatic live
-preview, document/image cleanup and reusable customer/business profiles.
+Still to build: nested layouts, automatic live PDF preview, document/image
+cleanup and reusable customer/business profiles.
 
 MIT; vendored pdfcn code retains its MIT notice under `renderer/PDFCN-LICENSE`.
 Bundled DejaVu fonts retain their licence under `renderer/fonts/LICENSE`.

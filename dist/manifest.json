@@ -8,10 +8,10 @@
     "package.json": "eea723e8f7368c8c6d78e552d36e6b7be86b175902c0d206729c2f99a7a861a4",
     "renderer/assets.ts": "780de2a2a4a19a32dd4879d333ab26dda335ec3642205eb6601fa33f27720096",
     "renderer/cli.ts": "9fb3700024b12123983275eac63b4c5e54ceefc025be2a9bfb7a07f34adddb22",
-    "renderer/design-cli.ts": "5f96a1f1f80fae726dcf53093bad10cdefa3522d1145cd16da3982dad573fb05",
-    "renderer/design-render.tsx": "d80581d6bac8c59676b520b11b115eb0cefb09e0e144a474ed45cd4f6f07a0b3",
+    "renderer/design-cli.ts": "ff24f3c52bd535c327e630db3e959851e782bdbbc9ac6946bffdb2354a5f2ddf",
+    "renderer/design-render.tsx": "f88047f4ff009256451c559ee7d45dc7e93d6176c645b503329ee02a46174d75",
     "renderer/design-store.ts": "20e2f05f5d184af72b596a78e78ae0ea0c93754f63a93572c5e281e7504cfeb2",
-    "renderer/document.ts": "4c0f5d4e4fb0050647856e7733e93da03a991e3545773f57671502f0acf18cd3",
+    "renderer/document.ts": "15bbcf31ff5af60d8179603a85e28118a9f38b19a19baee5e32e691da8cd3317",
     "renderer/fonts/DejaVuSans-Bold.ttf": "5c1247acef7f2b8522a31742c76d6adcb5569bacc0be7ceaa4dc39dd252ce895",
     "renderer/fonts/DejaVuSans.ttf": "ae7b7855e115a5966d8b1b3f80f254ccc117ec86f9965e202ee2940453837280",
     "renderer/fonts/DejaVuSansMono-Bold.ttf": "3a3c502eeff669a231549e80df9f7c49de109bafe303170409e905d0b31a38fe",
@@ -36,8 +36,8 @@
   },
   "assets": {
     "renderer.mjs": {
-      "bytes": 211870,
-      "sha256": "3b24fcc5ca67071e42f0a035792f3cc29406c8047fc7968c73ac44426cd59fb8"
+      "bytes": 214104,
+      "sha256": "4bbd68144fb8bbd44c8606cf181fa863ff3da76300a5dd3245a26c5897b8d7f4"
     },
     "forme.cjs": {
       "bytes": 13408,

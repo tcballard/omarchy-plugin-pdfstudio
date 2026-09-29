@@ -29,3 +29,4 @@ jobs:
       - run: python -m pip install PySide6-Essentials==6.8.3
       - run: python tests/qml-popup.py
       - run: python tests/qml-popup.py --designer
+      - run: python tests/qml-popup.py --designer --free
