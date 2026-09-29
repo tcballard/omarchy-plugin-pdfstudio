@@ -3728,11 +3728,11 @@ function svgChildrenToString(children) {
       const name = svgCamelToKebab[k] ?? k;
       return `${name}="${escapeXmlAttr(String(v))}"`;
     }).join(" ");
-    const open3 = attrStr ? `<${tag} ${attrStr}` : `<${tag}`;
+    const open4 = attrStr ? `<${tag} ${attrStr}` : `<${tag}`;
     if (nested) {
-      result += `${open3}>${svgChildrenToString(nested)}</${tag}>`;
+      result += `${open4}>${svgChildrenToString(nested)}</${tag}>`;
     } else {
-      result += `${open3}/>`;
+      result += `${open4}/>`;
     }
   });
   return result;
@@ -5134,16 +5134,28 @@ async function readBounded(path, limit) {
     await file.close();
   }
 }
+function errorReply(error) {
+  return { ok: false, error: String(error || "Operation failed.").slice(0, 1024) };
+}
+function encodeReply(value) {
+  const json = JSON.stringify(value);
+  if (Buffer.byteLength(json) > MAX_REQUEST_BYTES) throw Error("Renderer response is too large.");
+  return json + "\n";
+}
+function reply(value) {
+  process.stdout.write(encodeReply(value));
+}
 
 // renderer/cli.ts
-import { mkdir as mkdir2, writeFile as writeFile2 } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+import { mkdir as mkdir2, writeFile } from "node:fs/promises";
 import { join as join2 } from "node:path";
 import { homedir as homedir2 } from "node:os";
 import { randomUUID as randomUUID3 } from "node:crypto";
 
 // renderer/store.ts
 init_model();
-import { mkdir, writeFile, rename, unlink } from "node:fs/promises";
+import { mkdir, open as open3, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID as randomUUID2 } from "node:crypto";
@@ -5244,8 +5256,20 @@ var Store = class {
       if (Buffer.byteLength(json) > MAX_STORE_BYTES) throw Error("Draft storage exceeds the 16 MiB limit. Your data has not been overwritten.");
       const temp = join(this.directory, `.drafts-${randomUUID2()}.tmp`);
       try {
-        await writeFile(temp, json, { flag: "wx", mode: 384 });
+        const file = await open3(temp, "wx", 384);
+        try {
+          await file.writeFile(json);
+          await file.sync();
+        } finally {
+          await file.close();
+        }
         await rename(temp, join(this.directory, "drafts.json"));
+        const directory = await open3(this.directory, "r");
+        try {
+          await directory.sync();
+        } finally {
+          await directory.close();
+        }
       } finally {
         await unlink(temp).catch(() => {
         });
@@ -5261,12 +5285,13 @@ var Store = class {
 init_model();
 process.umask(63);
 var timer = setTimeout(() => {
-  console.log(JSON.stringify({ ok: false, error: "Operation timed out." }));
+  reply(errorReply("Operation timed out."));
   process.exit(1);
 }, 45e3);
 try {
   const line = await requestLine(process.stdin);
   const r = JSON.parse(line);
+  if (!r || typeof r !== "object" || Array.isArray(r) || typeof r.action !== "string") throw Error("Invalid request.");
   const store = new Store();
   let result;
   switch (r.action) {
@@ -5297,16 +5322,16 @@ try {
       const dir = r.action === "preview" ? join2(process.env.XDG_CACHE_HOME || join2(homedir2(), ".cache"), "omarchy-pdf-studio") : join2(homedir2(), "Documents", "PDF Studio");
       await mkdir2(dir, { recursive: true, mode: 448 });
       const path = join2(dir, `invoice-${d.id}-${randomUUID3()}.pdf`);
-      await writeFile2(path, bytes, { flag: "wx", mode: 384 });
-      result = { path };
+      await writeFile(path, bytes, { flag: "wx", mode: 384 });
+      result = { path, url: pathToFileURL(path).href };
       break;
     }
     default:
       throw Error("Unknown action.");
   }
-  console.log(JSON.stringify({ ok: true, ...result }));
+  reply({ ok: true, ...result });
 } catch (e) {
-  console.log(JSON.stringify({ ok: false, error: e.message || "Operation failed." }));
+  reply(errorReply(e.message || "Operation failed."));
   process.exitCode = 1;
 } finally {
   clearTimeout(timer);

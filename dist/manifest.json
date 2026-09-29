@@ -6,12 +6,12 @@
   "sources": {
     "package-lock.json": "3758746bbafaa0ce1560b30f574793d79d4daee5d8fb0c184fae97c100729a61",
     "package.json": "eea723e8f7368c8c6d78e552d36e6b7be86b175902c0d206729c2f99a7a861a4",
-    "renderer/cli.ts": "9d4507917240d4edc3113333d19667d07f8e87f11ed7825b65266b31977718f2",
+    "renderer/cli.ts": "bde4fd41d1b485d287e451c444cfded8f638e9526c61607364467483b01c579b",
     "renderer/invoice.tsx": "36d3b17ae72119dd509ac6ef4ddf381fa7057f4336a84bf25c7c5f62c33ae1ce",
-    "renderer/io.ts": "c9db96025412ebd2fdcaf778977697f6583e7e3c9b78808844a5781d6e1a935b",
+    "renderer/io.ts": "e63af7605af8ee7323dbd67dc0c8101d0b60ec3613c9eb5d4f440db3dc9a0e24",
     "renderer/lock.ts": "016c7e5bb55193b465645403a513143a0e1144d98d8d55d3d6a057da590a8839",
     "renderer/model.ts": "f06d25b5bb21bb57002c96eb488801be4a86531ada63960cef2bbfe37e3a87ac",
-    "renderer/store.ts": "3f9193c70bb528783a65c2490d40c0a2848bfdf08d4873113c8f87965c4618d7",
+    "renderer/store.ts": "331e866f7405a53cfeddc180f974a9a3b5edcbf7af8640b59df0fca188b36ad3",
     "renderer/vendor/registry/bases/forme/components/page-header/page-header.tsx": "031ba27cbb244f468767013ca74656690e410c29684b80de7b3267d0168ab8d5",
     "renderer/vendor/registry/bases/forme/components/text/text.tsx": "33324f74870fbc55771469b6386c32b0b1062d193a50c31c33dd1a14f8de63a5",
     "renderer/vendor/registry/bases/forme/components/theme-provider.tsx": "8831d232d18e75b1b8b9488d0f0c4b797b2c350e8a07ba917a9b4809f5166d69",
@@ -24,8 +24,8 @@
   },
   "assets": {
     "renderer.mjs": {
-      "bytes": 187620,
-      "sha256": "af56747cf73367a6fe3a7daf2a5960d576ac9058b16a8749db0cfd53b7a2e1bd"
+      "bytes": 188393,
+      "sha256": "825661aab949cd23aeee7b509172ecfaaf6825849b409c00b4b0d042a55ed317"
     },
     "forme.cjs": {
       "bytes": 13408,

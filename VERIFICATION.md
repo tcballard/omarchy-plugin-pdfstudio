@@ -7,7 +7,7 @@ workspace. Source contract inspected against Omarchy quattro commit
 Passed:
 
 - `npm ci` with the committed lockfile and `.npmrc` settings.
-- `./tests/run`: manifest validation, strict TypeScript typecheck, twelve Node tests
+- `./tests/run`: manifest validation, strict TypeScript typecheck, nineteen Node tests
   covering decimal rounding, invalid input, draft number/revision/corruption rules,
   real PDF rendering, stdin helper new/save/list/preview from a different cwd,
   and the distributed renderer with no source, node_modules, npm or tsx available.
@@ -15,10 +15,16 @@ Passed:
   multibyte text), unknown-field removal, paged summaries and on-demand loading,
   storage size/count limits without data replacement, editing at the count limit,
   concurrent writers, old empty lock files and SIGKILL recovery.
+  The follow-up pass adds response byte/error caps, encoded PDF file URLs, and
+  execution of the actual Panel.qml JavaScript functions with stubbed Process,
+  Timer and ListModel interfaces. Panel regressions cover both completion orders,
+  nonzero/crashed exits, malformed and incomplete replies, timeout/late output,
+  queued-action serialization, failed discard-and-load, host hide during save,
+  and discard/cancel behavior. These stubs do not verify Qt focus or host IPC.
 - `npm run check:bundle`: rebuilt output exactly matches committed assets and
   the source/lockfile hashes. The check is now part of `./tests/run`.
-- Clean checkout at a different filesystem path: `npm ci` followed by
-  `./tests/run` passes with the committed bundle unchanged.
+- Earlier packaging pass: a clean checkout at a different filesystem path
+  passed `npm ci` and `./tests/run` with the committed bundle unchanged.
 - `npm audit --json`: zero reported vulnerabilities after pinning esbuild 0.28.2.
 - Toolkit `validate_plugin.py --json --security` on tracked release files:
   manifest valid; advisory capability review is not security certification.
@@ -40,6 +46,10 @@ its persistent lock file must not be deleted. No npm setup is needed at runtime.
 
 Before release, install on the target machine and exercise those paths. Check
 Previous/Next with over 50 drafts and opening a saved draft after unsaved edits.
+Verify the save/discard/cancel popup traps keyboard input, Escape cancels it,
+Ctrl+S cannot bypass it, and a missing Node executable produces a retryable error.
+Draft writes now fsync the temporary file before rename and the containing
+folder afterward; sudden power loss has not been simulated.
 Save a
 draft, restart the shell and confirm restoration. Verify invalid prices, an
 unwritable data directory, a missing Node runtime and a PDF render failure show

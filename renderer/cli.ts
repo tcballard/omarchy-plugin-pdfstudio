@@ -1,4 +1,5 @@
-import {requestLine} from './io';
+import {requestLine,reply,errorReply} from './io';
+import {pathToFileURL} from 'node:url';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {homedir} from 'node:os';
@@ -8,10 +9,12 @@ import {fresh,validate,totals,money} from './model';
 
 // One JSON request on stdin. No shell evaluation, web server or network requests.
 process.umask(0o077);
-const timer=setTimeout(()=>{console.log(JSON.stringify({ok:false,error:'Operation timed out.'}));process.exit(1);},45000);
+const timer=setTimeout(()=>{reply(errorReply('Operation timed out.'));process.exit(1);},45000);
 try {
     const line=await requestLine(process.stdin);
-    const r=JSON.parse(line);const store=new Store();let result;
+    const r=JSON.parse(line);
+    if(!r || typeof r!=='object' || Array.isArray(r) || typeof r.action!=='string') throw Error('Invalid request.');
+    const store=new Store();let result;
     switch(r.action) {
       case 'list':result=await store.list(r.offset ?? 0);break;
       case 'load':result={draft:await store.load(r.id)};break;
@@ -26,10 +29,10 @@ try {
         const dir=r.action==='preview'?join(process.env.XDG_CACHE_HOME||join(homedir(),'.cache'),'omarchy-pdf-studio'):join(homedir(),'Documents','PDF Studio');
         await mkdir(dir,{recursive:true,mode:0o700});
         const path=join(dir,`invoice-${d.id}-${randomUUID()}.pdf`);
-        await writeFile(path,bytes,{flag:'wx',mode:0o600});result={path};break;
+        await writeFile(path,bytes,{flag:'wx',mode:0o600});result={path,url:pathToFileURL(path).href};break;
       }
       default:throw Error('Unknown action.');
     }
-    console.log(JSON.stringify({ok:true,...result}));
-} catch(e:any) {console.log(JSON.stringify({ok:false,error:e.message||'Operation failed.'}));process.exitCode=1;}
+    reply({ok:true,...result});
+} catch(e:any) {reply(errorReply(e.message||'Operation failed.'));process.exitCode=1;}
 finally {clearTimeout(timer);process.stdin.destroy();}
