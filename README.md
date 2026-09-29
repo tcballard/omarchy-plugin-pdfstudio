@@ -1,13 +1,16 @@
-# PDF Studio
+<h1 align="center">PDF Studio</h1>
 
-[![Built for Omarchy: Plugin](https://raw.githubusercontent.com/tcballard/omarchy-badges/75975e5b5bf75e7ede3764bcd2950046f7abfe2c/badges/v1/omarchy-plugin.svg)](https://github.com/tcballard/omarchy-badges)
+<p align="center">
+  <a href="https://github.com/tcballard/omarchy-badges"><img src="https://raw.githubusercontent.com/tcballard/omarchy-badges/75975e5b5bf75e7ede3764bcd2950046f7abfe2c/badges/v1/omarchy-plugin.svg" alt="Built for Omarchy: Plugin" height="24"></a>
+</p>
 
-Create invoices in an Omarchy panel, save drafts locally and export PDFs using
-[pdfcn](https://github.com/shadcn-labs/pdfcn) and Forme.
+<p align="center"><strong>Create an invoice. Save the draft. Export the PDF.</strong></p>
 
-**Development preview.** The renderer and storage have portable tests. The panel
-still needs verification in a live Omarchy Quattro session; this is not a release
-or marketplace submission.
+PDF Studio brings invoice creation to an Omarchy panel. Add your business and customer details, enter line items, and export an A4 invoice with calculated totals. Drafts and PDFs stay on your machine, with no account or subscription required.
+
+**Development preview:** PDF generation and draft storage are tested; the panel still needs live Omarchy testing. [Install and setup](#try-the-development-checkout).
+
+*Panel screenshot pending an on-device capture.* [View a sample invoice](demo/sample-invoice.pdf) generated with pdfcn and Forme.
 
 ## What works in this build
 
