@@ -7,6 +7,7 @@ import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Hyprland
 import qs.Commons
+import qs.Ui as Ui
 
 Item {
   id: root
@@ -18,6 +19,11 @@ Item {
   readonly property bool freeLayout: doc!==null && doc.layout==="free"
   property int canvasPage: 1
   property bool showPdf: false
+  property bool libraryVisible: false
+  property bool layersVisible: false
+  property bool pageSettings: false
+  property bool frameSettings: false
+  property string previewError: ""
   property string assetBaseUrl: ""
   property bool snapToGrid: false
   property real canvasZoom: 1
@@ -66,7 +72,7 @@ Item {
   function close() {imagePicker.close();opened=false;confirmAction="";queuedAction="";followup.stop()}
   function setDoc(d) {
     doc=clone(d);selectedIndex=d.blocks.length ? 0 : -1;dirty=false
-    undoStack=[];redoStack=[];editGroup="";outputUrl="";previewUrl="";previewPage=1;previewPages=1;previewStale=false;canvasPage=d.layout==="free" && d.blocks.length?d.blocks[0].frame.page:1;showPdf=false
+    undoStack=[];redoStack=[];editGroup="";outputUrl="";previewUrl="";previewError="";previewPage=1;previewPages=1;previewStale=false;canvasPage=d.layout==="free" && d.blocks.length?d.blocks[0].frame.page:1;showPdf=false
   }
   function uuid() {return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,function(c){var r=Math.floor(Math.random()*16);return (c==="x"?r:(r&3|8)).toString(16)})}
   function change(next,group) {
@@ -108,7 +114,7 @@ Item {
       d.blocks.forEach(function(b){delete b.frame});delete d.layout;delete d.pageCount;d.schema=1
     }
     change(d,"");selectedIndex=d.blocks.length?0:-1;canvasPage=free && d.blocks.length?d.blocks[0].frame.page:1;showPdf=false;previewUrl=""
-    status=free?"Free layout enabled. Drag and resize blocks; content outside a frame is clipped. Refresh to check the exact PDF.":"Flow layout restored in page / top-to-bottom order. Undo restores positioning."
+    status=free?"Free layout · Drag and resize blocks. Preview PDF checks the exact output.":"Flow layout restored in page / top-to-bottom order. Undo restores positioning."
   }
   function commitFrame(index,x,y,w,h) {
     if(!freeLayout || index<0 || index>=doc.blocks.length)return
@@ -207,9 +213,10 @@ Item {
     // UTF-8 may use four bytes per character; the helper enforces the exact byte limit.
     if(serialized.length>262144){status="Document is too large. Shorten some text or tables.";queuedAction="";return}
     inFlight=true;helperStarted=false;receivedOutput=false;receivedExit=false;responseText="";responseCode=-1;responseExitStatus=-1
+    if(action==="designPreview" || action==="designExport"){previewError="";showPdf=true}
     worker.action=action;worker.payload=serialized;status=action==="designPreview" || action==="designExport" ? "Rendering PDF…":"Working…";worker.running=true
   }
-  function failRequest(message) {inFlight=false;responseText="";worker.payload="";queuedAction="";followup.stop();status=String(message || "Operation failed. Your edits are still here.").slice(0,1024)}
+  function failRequest(message) {inFlight=false;responseText="";worker.payload="";queuedAction="";followup.stop();status=String(message || "Operation failed. Your edits are still here.").slice(0,1024);if(worker.action==="designPreview" || worker.action==="designExport")previewError=status}
   function receiveOutput(text) {if(!inFlight)return;responseText=String(text);receivedOutput=true;finishRequest()}
   function receiveExit(code,exitStatus) {if(!inFlight)return;responseCode=code;responseExitStatus=exitStatus;receivedExit=true;finishRequest()}
   function validResponse(r) {
@@ -241,8 +248,8 @@ Item {
       if(i>=0){undoStack=undoStack.concat([clone(doc)]).slice(-30);redoStack=[];d.blocks[i].asset=r.asset;doc=d;dirty=true;previewStale=true;outputUrl="";editGroup=""}
     }
     if(r.url)outputUrl=r.url
-    if(action==="designPreview") {previewUrl=r.previewUrl || "";previewPage=r.page || 1;previewPages=r.pages || 1;previewStale=false;if(freeLayout){showPdf=true;canvasPage=previewPage}}
-    status=action==="designSave"?"Document saved":action==="designTemplate"?"Template saved — select Templates to use it":action==="designExport"?"PDF exported to Documents / PDF Studio":action==="designPreview"?(r.previewError || "Preview ready"):"Ready"
+    if(action==="designPreview" || action==="designExport") {previewError=r.previewError || "";previewUrl=r.previewUrl || "";previewPage=r.page || 1;previewPages=r.pages || 1;previewStale=false;if(freeLayout){showPdf=true;canvasPage=previewPage}}
+    status=action==="designSave"?"Document saved":action==="designTemplate"?"Template saved — select Templates to use it":action==="designExport"?(r.previewError || "PDF exported to Documents / PDF Studio"):action==="designPreview"?(r.previewError || "Preview ready"):"Ready"
     if(opened && queuedAction)followup.start()
     else if(opened && (action==="designNew" || action==="designSave" || action==="designTemplate")){queuedAction="designList";queuedArgs={template:showTemplates,offset:0};followup.start()}
   }
@@ -254,6 +261,7 @@ Item {
   Timer {interval:50000;running:root.inFlight;onTriggered:root.abortRequest("Operation timed out. Reload the saved document to check whether the save completed.")}
   Process {
     id:worker
+    objectName:"pdfWorker"
     property string action:""
     property string payload:""
     command:["node",root.basePath+"dist/renderer.mjs"]
@@ -263,6 +271,7 @@ Item {
     stdout:StdioCollector {waitForEnd:true;onStreamFinished:root.receiveOutput(text)}
     onExited:function(code,exitStatus){root.receiveExit(code,exitStatus)}
   }
+  component Action: Ui.Button {focusable:true;opacity:enabled?1:0.4}
   component Caption: Label {color:Color.popups.text;opacity:0.65;font.pixelSize:12;Layout.fillWidth:true;wrapMode:Text.Wrap;textFormat:Text.PlainText}
   component Input: TextField {Layout.fillWidth:true;selectByMouse:true;maximumLength:100}
   component CopyArea: ScrollView {
@@ -284,7 +293,7 @@ Item {
     WlrLayershell.keyboardFocus:root.opened ? WlrKeyboardFocus.OnDemand:WlrKeyboardFocus.None
     exclusionMode:ExclusionMode.Ignore
     Pane {
-      anchors.fill:parent;padding:20
+      anchors.fill:parent;padding:16
       background:Rectangle {radius:Style.cornerRadius;color:Color.popups.background;border.color:Color.popups.border}
       palette.window:Color.popups.background
       palette.base:Color.popups.background
@@ -301,22 +310,32 @@ Item {
   }
       Shortcut {sequence:"Escape";enabled:root.opened && !root.busy && root.confirmAction==="";onActivated:root.transition("close")}
       Shortcut {sequence:"Ctrl+S";enabled:root.opened && !root.busy && root.doc!==null && root.confirmAction==="";onActivated:root.request("designSave")}
-      ScrollView {
-        id:workspaceView
-        anchors.fill:parent;clip:true
-        contentWidth:Math.max(1100,availableWidth)
-        contentHeight:availableHeight
       ColumnLayout {
-        width:workspaceView.contentWidth;height:workspaceView.availableHeight;spacing:12;enabled:root.confirmAction===""
+        anchors.fill:parent;spacing:12;enabled:root.confirmAction===""
         RowLayout {
-          Label {text:"PDF Studio";font.pixelSize:24;font.bold:true;color:Color.popups.text}
-          Caption {text:"/  DOCUMENT DESIGNER"}
-          Button {text:"Invoices";enabled:!root.busy;onClicked:root.transition("invoices")}
-          Button {text:"Close";enabled:!root.busy;onClicked:root.transition("close")}
+          Layout.fillWidth:true;spacing:12
+          Label {text:"PDF Studio";font.pixelSize:20;font.bold:true;color:Color.popups.text}
+          Input {Layout.minimumWidth:80;placeholderText:"Untitled document";text:root.doc?root.doc.title:"";enabled:!root.busy && root.doc!==null;onTextEdited:root.edit("title",text)}
+          Label {text:root.dirty?"Edited":"";color:Color.popups.text;opacity:0.6}
+          Action {text:"File";enabled:!root.busy;onClicked:fileMenu.open()
+            Menu {id:fileMenu;y:parent.height
+              MenuItem {text:"New blank document";onTriggered:root.transition("designNew",{preset:"blank"})}
+              MenuItem {text:"New letter";onTriggered:root.transition("designNew",{preset:"letter"})}
+              MenuItem {text:"New report";onTriggered:root.transition("designNew",{preset:"report"})}
+              MenuItem {text:"New brochure";onTriggered:root.transition("designNew",{preset:"brochure"})}
+              MenuSeparator {}
+              MenuItem {text:"Open document or template…";onTriggered:{root.libraryVisible=!root.libraryVisible;if(root.libraryVisible)root.list(0)}}
+              MenuItem {text:"Save as template";enabled:root.doc!==null;onTriggered:root.request("designTemplate")}
+              MenuSeparator {}
+              MenuItem {text:"Invoice editor";onTriggered:root.transition("invoices")}
+            }
+          }
+          Action {text:"Save";enabled:!root.busy && root.doc!==null;onClicked:root.request("designSave")}
+          Action {text:"Export PDF";bordered:true;enabled:!root.busy && root.doc!==null;onClicked:root.request("designExport",{page:root.freeLayout?root.canvasPage:root.previewPage})}
+          Action {text:"Close";enabled:!root.busy;onClicked:root.transition("close")}
         }
         RowLayout {
-          enabled:!root.busy
-          ComboBox {model:["New blank document","New letter","New report","New brochure"];displayText:"New document";onActivated:function(index){root.transition("designNew",{preset:["blank","letter","report","brochure"][index]})}}
+          visible:root.libraryVisible;enabled:!root.busy;Layout.fillWidth:true
           ComboBox {model:["Documents","Templates"];onActivated:function(index){root.showTemplates=index===1;root.list(0)}}
           ComboBox {
             id:savedPicker;Layout.fillWidth:true;model:root.entries;textRole:"title"
@@ -324,25 +343,26 @@ Item {
             delegate:ItemDelegate {required property var modelData;width:savedPicker.width;contentItem:Label {text:modelData.title;textFormat:Text.PlainText;color:Color.popups.text;elide:Text.ElideRight}}
             onActivated:function(index){root.transition(root.showTemplates?"designUseTemplate":"designLoad",{id:root.entries[index].id})}
           }
-          Button {text:"‹";enabled:root.entryOffset>0;onClicked:root.list(root.entryOffset-50);Accessible.name:"Previous saved documents"}
-          Button {text:"›";enabled:root.entryOffset+50<root.entryTotal;onClicked:root.list(root.entryOffset+50);Accessible.name:"Next saved documents"}
-          Button {text:"Save";enabled:root.doc!==null;onClicked:root.request("designSave")}
-          Button {text:"Save as template";enabled:root.doc!==null;onClicked:root.request("designTemplate")}
+          Action {text:"‹";enabled:root.entryOffset>0;onClicked:root.list(root.entryOffset-50);Accessible.name:"Previous saved documents"}
+          Action {text:"›";enabled:root.entryOffset+50<root.entryTotal;onClicked:root.list(root.entryOffset+50);Accessible.name:"Next saved documents"}
+          Action {text:"Done";onClicked:root.libraryVisible=false}
         }
+        Rectangle {Layout.fillWidth:true;height:1;color:Color.popups.border}
         RowLayout {
-          enabled:!root.busy && root.doc!==null
-          Input {placeholderText:"Document title";text:root.doc?root.doc.title:"";onTextEdited:root.edit("title",text)}
-          Caption {Layout.fillWidth:false;text:root.dirty?"Unsaved changes":"Saved / unchanged"}
-          Button {text:"Undo";enabled:root.undoStack.length>0;onClicked:root.history(false)}
-          Button {text:"Redo";enabled:root.redoStack.length>0;onClicked:root.history(true)}
+          Layout.fillWidth:true;enabled:!root.busy && root.doc!==null
+          ComboBox {Layout.preferredWidth:150;model:root.typeNames;displayText:"+ Insert";onActivated:function(index){root.addBlock(root.types[index]);root.pageSettings=false}}
+          Action {text:"Layers";selected:root.layersVisible;onClicked:root.layersVisible=!root.layersVisible}
+          Action {text:"Undo";enabled:root.undoStack.length>0;onClicked:root.history(false)}
+          Action {text:"Redo";enabled:root.redoStack.length>0;onClicked:root.history(true)}
+          Item {Layout.fillWidth:true}
+          Action {text:"Page setup";selected:root.pageSettings;onClicked:root.pageSettings=!root.pageSettings}
         }
         RowLayout {
           Layout.fillWidth:true;Layout.fillHeight:true;spacing:16
           ColumnLayout {
-            Layout.preferredWidth:220;Layout.maximumWidth:220;Layout.fillHeight:true
+            visible:root.layersVisible;Layout.preferredWidth:160;Layout.maximumWidth:160;Layout.fillHeight:true
             enabled:!root.busy && root.doc!==null
             Caption {text:(root.freeLayout?"LAYERS · BACK TO FRONT · ":"BLOCKS · ")+(root.doc?root.doc.blocks.length:0)+" / 80"}
-            ComboBox {Layout.fillWidth:true;model:root.typeNames;displayText:"+ Add block";onActivated:function(index){root.addBlock(root.types[index])}}
             ListView {
               id:blockList;Layout.fillWidth:true;Layout.fillHeight:true;clip:true;spacing:4;model:root.doc?root.doc.blocks:[]
               ScrollBar.vertical:ScrollBar {}
@@ -359,34 +379,45 @@ Item {
               }
             }
             RowLayout {
-              Button {Layout.preferredWidth:60;Layout.minimumWidth:0;text:"↑";enabled:root.selectedIndex>0;onClicked:root.moveBlock(-1);Accessible.name:"Move block up"}
-              Button {Layout.preferredWidth:60;Layout.minimumWidth:0;text:"↓";enabled:root.selected && root.selectedIndex<root.doc.blocks.length-1;onClicked:root.moveBlock(1);Accessible.name:"Move block down"}
-              Button {Layout.preferredWidth:80;Layout.minimumWidth:0;text:"Copy";enabled:root.selected!==null;onClicked:root.duplicateBlock()}
+              Action {Layout.preferredWidth:40;Layout.minimumWidth:0;text:"↑";enabled:root.selectedIndex>0;onClicked:root.moveBlock(-1);Accessible.name:"Move block up"}
+              Action {Layout.preferredWidth:40;Layout.minimumWidth:0;text:"↓";enabled:root.selected && root.selectedIndex<root.doc.blocks.length-1;onClicked:root.moveBlock(1);Accessible.name:"Move block down"}
+              Action {Layout.preferredWidth:60;Layout.minimumWidth:0;text:"Copy";enabled:root.selected!==null;onClicked:root.duplicateBlock()}
             }
             RowLayout {
               visible:root.freeLayout
-              Button {text:"To back";enabled:root.selected!==null;onClicked:root.moveLayer(false)}
-              Button {text:"To front";enabled:root.selected!==null;onClicked:root.moveLayer(true)}
+              Action {text:"To back";enabled:root.selected!==null;onClicked:root.moveLayer(false)}
+              Action {text:"To front";enabled:root.selected!==null;onClicked:root.moveLayer(true)}
             }
-            Button {text:"Remove block";Layout.fillWidth:true;enabled:root.selected!==null;onClicked:root.removeBlock()}
+            Action {text:"Remove block";Layout.fillWidth:true;enabled:root.selected!==null;onClicked:root.removeBlock()}
           }
           ColumnLayout {
             Layout.fillWidth:true;Layout.fillHeight:true
             RowLayout {
-              Caption {text:root.freeLayout && !root.showPdf?"CANVAS · DRAG / RESIZE":root.previewStale?"PAGE PREVIEW · NEEDS REFRESH":"PAGE PREVIEW"}
-              Button {text:"Refresh";enabled:!root.busy && root.doc!==null;onClicked:root.request("designPreview",{page:root.freeLayout?root.canvasPage:root.previewPage})}
+              Caption {text:root.freeLayout && !root.showPdf?"Canvas":root.previewStale?"PDF preview · changes not rendered":"PDF preview"}
+              Action {text:root.previewUrl===""?"Preview PDF":"Update preview";enabled:!root.busy && root.doc!==null;onClicked:root.request("designPreview",{page:root.freeLayout?root.canvasPage:root.previewPage})}
             }
             RowLayout {
               visible:root.freeLayout;enabled:!root.busy
-              Button {text:root.showPdf?"Edit canvas":"Show PDF";enabled:root.showPdf || root.previewUrl!=="";onClicked:root.showPdf=!root.showPdf}
+              Action {text:root.showPdf?"Edit canvas":"Show PDF";onClicked:if(root.showPdf)root.showPdf=false;else if(root.previewUrl!=="" && !root.previewStale)root.showPdf=true;else root.request("designPreview",{page:root.canvasPage})}
               CheckBox {text:"Snap 8 pt";checked:root.snapToGrid;onToggled:root.snapToGrid=checked}
               ComboBox {model:["Fit","150%","200%"];onActivated:function(index){root.canvasZoom=[1,1.5,2][index]}}
-              Button {text:"+ Page";enabled:root.doc && root.doc.pageCount<50;onClicked:root.addPage()}
+              Action {text:"+ Page";enabled:root.doc && root.doc.pageCount<50;onClicked:root.addPage()}
             }
             Rectangle {
               Layout.fillWidth:true;Layout.fillHeight:true;color:Qt.rgba(0,0,0,0.18);radius:6
-              Image {anchors.fill:parent;anchors.margins:12;source:root.previewUrl;fillMode:Image.PreserveAspectFit;asynchronous:true;cache:false;visible:root.previewUrl!=="" && (!root.freeLayout || root.showPdf)}
-              Label {anchors.centerIn:parent;width:parent.width-48;horizontalAlignment:Text.AlignHCenter;wrapMode:Text.Wrap;color:Color.popups.text;opacity:0.7;text:"Build your document with blocks.\n\nRefresh to see the rendered PDF here.";visible:root.previewUrl==="" && (!root.freeLayout || root.showPdf)}
+              Image {
+                id:pdfImage;objectName:"pdfImage";anchors.fill:parent;anchors.margins:20
+                source:root.previewUrl;fillMode:Image.PreserveAspectFit;asynchronous:true;cache:false
+                visible:status===Image.Ready && !(root.inFlight && (worker.action==="designPreview" || worker.action==="designExport")) && root.previewError==="" && (!root.freeLayout || root.showPdf)
+                onStatusChanged:if(status===Image.Error)root.previewError="The PDF was created, but its page image could not be displayed. Try Preview PDF again or open the PDF in your viewer."
+              }
+              ColumnLayout {
+                anchors.centerIn:parent;width:Math.max(100,parent.width-64);spacing:16
+                visible:(!root.freeLayout || root.showPdf) && (root.previewError!=="" || pdfImage.status!==Image.Ready || (root.busy && (worker.action==="designPreview" || worker.action==="designExport")))
+                Label {Layout.fillWidth:true;horizontalAlignment:Text.AlignHCenter;wrapMode:Text.Wrap;color:Color.popups.text;font.pixelSize:18;text:root.busy?"Rendering your document…":root.previewError!==""?"Preview unavailable":"Your page starts here"}
+                Label {Layout.fillWidth:true;horizontalAlignment:Text.AlignHCenter;wrapMode:Text.Wrap;color:Color.popups.text;opacity:0.7;textFormat:Text.PlainText;text:root.previewError || (root.busy?"The PDF will appear here when it is ready.":"Insert text, images or a table, then preview your PDF. For drag-and-drop positioning, choose Free layout in Page setup.")}
+                Action {Layout.alignment:Qt.AlignHCenter;text:"Preview PDF";visible:!root.busy;enabled:root.doc!==null;onClicked:root.request("designPreview",{page:root.freeLayout?root.canvasPage:root.previewPage})}
+              }
               FreeCanvas {
                 id:freeCanvas;anchors.fill:parent;visible:root.freeLayout && !root.showPdf
                 enabled:!root.busy && root.confirmAction===""
@@ -400,19 +431,25 @@ Item {
             }
             RowLayout {
               Layout.alignment:Qt.AlignHCenter
-              Button {text:"Previous page";enabled:!root.busy && (root.freeLayout && !root.showPdf?root.canvasPage:root.previewPage)>1;onClicked:if(root.freeLayout && !root.showPdf){root.canvasPage--;root.selectedIndex=-1}else root.request("designPreview",{page:root.previewPage-1})}
+              Action {text:"Previous page";enabled:!root.busy && (root.freeLayout && !root.showPdf?root.canvasPage:root.previewPage)>1;onClicked:if(root.freeLayout && !root.showPdf){root.canvasPage--;root.selectedIndex=-1}else root.request("designPreview",{page:root.previewPage-1})}
               Label {text:root.freeLayout && !root.showPdf?root.canvasPage+" / "+root.doc.pageCount:root.previewPage+" / "+root.previewPages;color:Color.popups.text}
-              Button {text:"Next page";enabled:!root.busy && (root.freeLayout && !root.showPdf?root.canvasPage<root.doc.pageCount:root.previewPage<root.previewPages);onClicked:if(root.freeLayout && !root.showPdf){root.canvasPage++;root.selectedIndex=-1}else root.request("designPreview",{page:root.previewPage+1})}
+              Action {text:"Next page";enabled:!root.busy && (root.freeLayout && !root.showPdf?root.canvasPage<root.doc.pageCount:root.previewPage<root.previewPages);onClicked:if(root.freeLayout && !root.showPdf){root.canvasPage++;root.selectedIndex=-1}else root.request("designPreview",{page:root.previewPage+1})}
             }
           }
           ScrollView {
-            Layout.preferredWidth:300;Layout.maximumWidth:300;Layout.fillHeight:true;contentWidth:availableWidth;clip:true
+            Layout.preferredWidth:280;Layout.maximumWidth:280;Layout.fillHeight:true;contentWidth:availableWidth;clip:true
             ColumnLayout {
               width:parent.width;spacing:10;enabled:!root.busy && root.doc!==null
+              RowLayout {
+                Action {text:"Content";selected:!root.pageSettings;onClicked:root.pageSettings=false}
+                Action {text:"Page";selected:root.pageSettings;onClicked:root.pageSettings=true}
+              }
+              ColumnLayout {
+                Layout.fillWidth:true;visible:root.pageSettings
               Caption {text:"PAGE SETTINGS"}
               ComboBox {Layout.fillWidth:true;model:["Flow layout","Free layout"];currentIndex:root.freeLayout?1:0;onActivated:function(index){root.setLayout(index===1)}}
-              Caption {visible:root.freeLayout;text:"Drag blocks or use X/Y below. Arrow keys nudge 1 pt; Shift moves 10 pt. Content is clipped to its frame. Refresh for exact PDF typography."}
-              Button {visible:root.freeLayout;text:"Remove empty page";onClicked:root.removeEmptyPage()}
+              Caption {visible:root.freeLayout;text:"Drag to position; use the corner to resize. Arrow keys move 1 pt, Shift moves 10. Content outside a frame is clipped."}
+              Action {visible:root.freeLayout;text:"Remove empty page";onClicked:root.removeEmptyPage()}
               RowLayout {
                 ComboBox {Layout.fillWidth:true;model:["A4","Letter"];currentIndex:root.doc?model.indexOf(root.doc.page.size):0;onActivated:root.pageEdit("size",currentText)}
                 ComboBox {model:["portrait","landscape"];currentIndex:root.doc?model.indexOf(root.doc.page.orientation):0;onActivated:root.pageEdit("orientation",currentText)}
@@ -421,27 +458,10 @@ Item {
               SpinBox {from:16;to:100;value:root.doc?root.doc.page.margin:40;onValueModified:root.pageEdit("margin",value)}
               Caption {text:"Page colour · #RRGGBB"}
               Input {maximumLength:7;text:root.doc?root.doc.page.background:"#ffffff";onTextEdited:root.pageEdit("background",text)}
-              Rectangle {Layout.fillWidth:true;height:1;color:Color.popups.border}
-              Caption {text:root.selected?root.typeNames[root.types.indexOf(root.selected.type)].toUpperCase()+" PROPERTIES":"Select a block to edit it"}
+              }
+              Caption {visible:!root.pageSettings;text:root.selected?root.typeNames[root.types.indexOf(root.selected.type)].toUpperCase()+" PROPERTIES":"Select a block to edit it"}
               ColumnLayout {
-                Layout.fillWidth:true;visible:root.selected!==null
-                ColumnLayout {
-                  Layout.fillWidth:true;visible:root.freeLayout && root.selected!==null
-                  Caption {text:"FRAME · POINTS FROM PAGE TOP LEFT"}
-                  RowLayout {
-                    Caption {text:"X";Layout.fillWidth:false}
-                    SpinBox {from:0;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.x):0;onValueModified:root.frameEdit("x",value)}
-                    Caption {text:"Y";Layout.fillWidth:false}
-                    SpinBox {from:0;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.y):0;onValueModified:root.frameEdit("y",value)}
-                  }
-                  Caption {text:"Width / height"}
-                  RowLayout {
-                    SpinBox {from:24;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.width):24;onValueModified:root.frameEdit("width",value)}
-                    SpinBox {from:12;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.height):12;onValueModified:root.frameEdit("height",value)}
-                  }
-                  Caption {text:"Page"}
-                  SpinBox {from:1;to:root.freeLayout?root.doc.pageCount:1;value:root.selected && root.selected.frame?root.selected.frame.page:1;onValueModified:root.frameEdit("page",value)}
-                }
+                Layout.fillWidth:true;visible:!root.pageSettings && root.selected!==null
                 Caption {text:"Text";visible:root.selected && ["heading","text"].indexOf(root.selected.type)>=0}
                 CopyArea {visible:root.selected && ["heading","text"].indexOf(root.selected.type)>=0;text:root.selected?root.selected.text || "":"";onEdited:function(value){root.blockEdit("text",value)}}
                 Caption {text:"Left column";visible:root.selected && root.selected.type==="columns"}
@@ -450,7 +470,7 @@ Item {
                 CopyArea {visible:root.selected && root.selected.type==="columns";text:root.selected?root.selected.right || "":"";onEdited:function(value){root.blockEdit("right",value)}}
                 ColumnLayout {
                   Layout.fillWidth:true;visible:root.selected && root.selected.type==="image"
-                  Button {text:root.selected && root.selected.asset?"Replace image…":"Import image…";onClicked:{root.importTarget=root.selected.id;imagePicker.open()}}
+                  Action {text:root.selected && root.selected.asset?"Replace image…":"Import image…";onClicked:{root.importTarget=root.selected.id;imagePicker.open()}}
                   Caption {text:"PNG/JPEG · up to 4 MiB / 12 megapixels. Imported images are copied locally."}
                   Caption {visible:!root.freeLayout;text:"Width (%)"}
                   SpinBox {visible:!root.freeLayout;from:10;to:100;value:root.selected?root.selected.width || 100:100;onValueModified:root.blockEdit("width",value)}
@@ -461,12 +481,12 @@ Item {
                   Layout.fillWidth:true;visible:root.selected && root.selected.type==="table"
                   CheckBox {text:"First row is a repeated header";checked:root.selected?root.selected.header || false:false;onToggled:root.blockEdit("header",checked)}
                   RowLayout {
-                    Button {text:"+ Row";onClicked:root.tableSize("row",1)}
-                    Button {text:"− Row";onClicked:root.tableSize("row",-1)}
+                    Action {text:"+ Row";onClicked:root.tableSize("row",1)}
+                    Action {text:"− Row";onClicked:root.tableSize("row",-1)}
                   }
                   RowLayout {
-                    Button {text:"+ Column";onClicked:root.tableSize("column",1)}
-                    Button {text:"− Column";onClicked:root.tableSize("column",-1)}
+                    Action {text:"+ Column";onClicked:root.tableSize("column",1)}
+                    Action {text:"− Column";onClicked:root.tableSize("column",-1)}
                   }
                   Caption {text:"Cells are listed one row at a time. Maximum 40 rows × 6 columns."}
                   Repeater {
@@ -498,19 +518,35 @@ Item {
                 Input {visible:root.selected && ["image","spacer","pageBreak"].indexOf(root.selected.type)<0;maximumLength:7;text:root.selected?root.selected.color:"#18212b";onTextEdited:root.blockEdit("color",text)}
                 Caption {text:"Alignment";visible:root.selected && ["divider","spacer","pageBreak"].indexOf(root.selected.type)<0}
                 ComboBox {visible:root.selected && ["divider","spacer","pageBreak"].indexOf(root.selected.type)<0;Layout.fillWidth:true;model:["left","center","right"];currentIndex:root.selected?model.indexOf(root.selected.align):0;onActivated:root.blockEdit("align",currentText)}
+                Action {visible:root.freeLayout;text:root.frameSettings?"Hide position & size":"Position & size…";onClicked:root.frameSettings=!root.frameSettings}
+                ColumnLayout {
+                  Layout.fillWidth:true;visible:root.freeLayout && root.frameSettings && root.selected!==null
+                  Caption {text:"FRAME · POINTS FROM PAGE TOP LEFT"}
+                  RowLayout {
+                    Caption {text:"X";Layout.fillWidth:false}
+                    SpinBox {from:0;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.x):0;onValueModified:root.frameEdit("x",value)}
+                    Caption {text:"Y";Layout.fillWidth:false}
+                    SpinBox {from:0;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.y):0;onValueModified:root.frameEdit("y",value)}
+                  }
+                  Caption {text:"Width / height"}
+                  RowLayout {
+                    SpinBox {from:24;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.width):24;onValueModified:root.frameEdit("width",value)}
+                    SpinBox {from:12;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.height):12;onValueModified:root.frameEdit("height",value)}
+                  }
+                  Caption {text:"Page"}
+                  SpinBox {from:1;to:root.freeLayout?root.doc.pageCount:1;value:root.selected && root.selected.frame?root.selected.frame.page:1;onValueModified:root.frameEdit("page",value)}
+                }
                 Caption {text:"Space after block (pt)";visible:!root.freeLayout && root.selected && root.selected.type!=="pageBreak"}
                 SpinBox {visible:!root.freeLayout && root.selected && root.selected.type!=="pageBreak";from:0;to:60;value:root.selected?root.selected.spacing:12;onValueModified:root.blockEdit("spacing",value)}
               }
             }
           }
         }
-        Label {Layout.fillWidth:true;text:root.status;textFormat:Text.PlainText;wrapMode:Text.Wrap;color:Color.popups.text}
+        Rectangle {Layout.fillWidth:true;height:1;color:Color.popups.border}
         RowLayout {
-          Caption {text:root.freeLayout?"Local documents · Free layout · Refresh for the exact PDF":"Local documents · Flow layout · Refresh preview after editing"}
-          Button {text:"Open PDF";visible:root.outputUrl!=="";onClicked:if(!Qt.openUrlExternally(root.outputUrl))root.status="Could not open the PDF. Check your default PDF viewer."}
-          Button {text:"Export PDF";enabled:!root.busy && root.doc!==null;onClicked:root.request("designExport")}
+          Label {Layout.fillWidth:true;text:root.status;textFormat:Text.PlainText;wrapMode:Text.Wrap;maximumLineCount:2;color:Color.popups.text;opacity:0.75}
+          Action {text:"Open PDF ↗";visible:root.outputUrl!=="";onClicked:if(!Qt.openUrlExternally(root.outputUrl))root.status="Could not open the PDF. Check your default PDF viewer."}
         }
-      }
       }
       Popup {
         id:confirmDialog;anchors.centerIn:parent;visible:root.opened && root.confirmAction!=="";modal:true;focus:true;closePolicy:Popup.NoAutoClose;padding:24
@@ -521,9 +557,9 @@ Item {
           Label {text:"Save your changes?";font.pixelSize:22;color:Color.popups.text}
           Label {text:"This document has unsaved edits.";color:Color.popups.text}
           RowLayout {
-            Button {text:"Cancel";onClicked:root.confirmAction=""}
-            Button {text:"Discard";onClicked:root.discardChanges()}
-            Button {text:"Save";onClicked:root.saveThenContinue()}
+            Action {text:"Cancel";onClicked:root.confirmAction=""}
+            Action {text:"Discard";onClicked:root.discardChanges()}
+            Action {text:"Save";onClicked:root.saveThenContinue()}
           }
         }
       }

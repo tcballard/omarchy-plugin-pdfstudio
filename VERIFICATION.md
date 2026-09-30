@@ -90,7 +90,7 @@ For the designer's live test, import a local PNG and JPEG through the native fil
 picker, edit and reorder blocks, refresh each page, export and compare the PDF.
 Save a template, use it twice, and verify each document remains independent.
 Test Save / Discard / Cancel when switching to Invoices and back, restore saved
-documents after a shell restart, and check the horizontal scroll on a small screen.
+documents after a shell restart, and check the canvas and inspector at small logical screen sizes.
 Inline preview is optional; verify the external-viewer fallback without Poppler.
 
 Free-layout extension:
@@ -114,3 +114,23 @@ scroll to page edges, check snapping, select overlapping layers, move blocks acr
 pages, save/reopen a template, and compare Refresh against the exported PDF. Check
 that a host hide during a drag cancels the unfinished gesture without losing earlier
 edits. Canvas text is a Qt approximation; the rendered PDF is the export reference.
+
+
+Editor repair after on-device feedback:
+
+- Export now rasterizes the selected page for the inline viewer as well as saving
+  the PDF. Raster images stay in XDG cache; only PDFs go to Documents / PDF Studio.
+  A conversion failure returns the PDF link and a visible preview error.
+- Both designer Qt runs now invoke the shipped helper for Preview and Export,
+  feed its output through the production response handlers, and verify the real
+  Qt image decoder displays the result. A missing-image check verifies the error
+  state preserves the external PDF link. The helper transport and Wayland surface
+  remain stubbed; Omarchy Ui.Button is represented by a Qt button contract stub.
+- Local checks: 33 Node tests, typecheck, bundle reproducibility, all three Qt
+  interaction runs, and inspection of offscreen layouts at 1280×850 and 1024×720.
+- File management is tucked into File; layers are optional, Content and Page are
+  separate inspector views, and geometry controls expand on request. There is
+  no whole-window minimum-width horizontal scroll. Actions use qs.Ui.Button.
+- Still unverified: live Omarchy theme/control rendering, Quickshell process
+  transport, the user's original blank-preview cause, native file picker and
+  external viewer. This pass is not evidence of marketplace readiness.

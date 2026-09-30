@@ -14,7 +14,7 @@ PDF Studio brings document design to an Omarchy panel. Arrange text, images, tab
 
 ## What works in this build
 
-- A native document designer with a block list, rendered page preview and properties.
+- A native document designer with a page workspace, optional layers and contextual controls.
 - Headings, text, PNG/JPEG images, tables, dividers, spacers, two text columns and page breaks.
 - Reorder, duplicate and remove blocks; undo/redo up to 30 changes.
 - Free layout: drag and resize blocks anywhere on a page, with layers, snapping,
@@ -29,16 +29,17 @@ PDF Studio brings document design to an Omarchy panel. Arrange text, images, tab
 
 ## Design a document
 
-Open PDF Studio and choose **New document**, or start adding blocks to the blank
-page. Select a block on the left to edit its content and appearance on the right.
-Use the arrows to change its order. Text flows down the page and continues onto
-new pages in **Flow layout**. Choose **Free layout** in Page settings to place
+Open PDF Studio and use **File** to start a document, or **+ Insert** to add
+content to the blank page. **Layers** shows the block list; select a block there
+or on the free canvas to edit it in **Content**. Use the layer arrows to change
+its order. Text flows down the page and continues onto
+new pages in **Flow layout**. Choose **Free layout** in **Page setup** to place
 blocks yourself. Nested layouts are not supported yet.
 Two-column blocks contain two editable text areas. Tables support up to 40 rows
 and six columns, with an optional repeated header row.
 
 In **Free layout**, drag a block to move it and drag its lower-right handle to
-resize it. The inspector provides X, Y, width, height and page controls in points
+resize it. **Position & size…** provides X, Y, width, height and page controls in points
 (72 pt = one inch), measured from the top-left of the page. **Snap 8 pt** enables
 grid snapping; the zoom selector enlarges the canvas with scrollbars. With canvas
 focus, arrow keys move the selected block by 1 pt, or 10 pt with Shift. Ctrl+Z
@@ -52,7 +53,7 @@ Images fit within their frames while retaining their proportions.
 
 **Content outside a free-layout frame is clipped in the PDF.** Resize the frame
 or shorten the content if needed. The canvas uses Qt text layout as an editing
-guide; **Refresh** shows the exact exported PDF, including font metrics and table
+guide; **Preview PDF / Update preview** shows the exact exported PDF, including font metrics and table
 layout. Use **Edit canvas / Show PDF** to switch views. Export always uses the
 current coordinates, even if the preview is stale.
 
@@ -63,10 +64,12 @@ frames. Either conversion can be undone. Free-layout documents use format versio
 2 so older designer builds reject them rather than silently erase positioning;
 existing version-1 flow documents continue to work.
 
-Choose **Refresh** to see the actual rendered PDF. The preview is marked stale
-after edits; refresh is explicit. **Export PDF** uses the current editor contents.
+Choose **Preview PDF / Update preview** to see the actual rendered PDF. The preview is marked stale
+after edits; updating it is explicit. **Export PDF** uses the current editor contents
+and displays the exported PDF in the editor. If the page image cannot be generated
+or loaded, the editor shows an error and keeps **Open PDF** available.
 Saving the editable document is a separate action: preview/export does not save
-it. **Save as template** creates a reusable copy; choosing that template starts
+it. **File → Save as template** creates a reusable copy; choosing that template starts
 a new document without changing the original. Close, switching editors and
 opening another document offer Save / Discard / Cancel when there are edits.
 
@@ -76,7 +79,7 @@ document. Each document supports 80 blocks and 128 KiB of content; text areas
 accept up to 4,000 characters and table cells up to 300. Colour fields use
 `#RRGGBB`. The helper reports invalid values without discarding your edits.
 
-Choose **Invoices** for the dedicated invoice form. Invoice preview/export saves
+Choose **File → Invoice editor** for the dedicated invoice form. Invoice preview/export saves
 its draft first. Each line rounds half-up to cents/pence, then tax rounds half-up
 on the subtotal. No tax-inclusive pricing or mixed rates yet. Invoices support
 100 line items; business/customer addresses, notes and payment fields accept

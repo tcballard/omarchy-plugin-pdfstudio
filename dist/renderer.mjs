@@ -4777,15 +4777,17 @@ async function designRequest(r) {
       const base = join4(dir, `document-${d.id}-${randomUUID6()}`), path = base + ".pdf";
       await writeFile(path, data, { flag: "wx", mode: 384 });
       const result = { path, url: pathToFileURL(path).href };
-      if (r.action === "designExport") return result;
+      const cache = join4(process.env.XDG_CACHE_HOME || join4(homedir3(), ".cache"), "omarchy-pdf-studio");
+      const rasterBase = join4(cache, `preview-${randomUUID6()}`);
       try {
+        await mkdir4(cache, { recursive: true, mode: 448 });
         const { stdout } = await exec("/usr/bin/timeout", ["--signal=KILL", "10s", "/usr/bin/pdfinfo", path], { timeout: 12e3, maxBuffer: 8192, env: { ...process.env, LC_ALL: "C" } });
         const match = /^Pages:\s+(\d+)\s*$/m.exec(stdout), pages = Number(match?.[1]);
         if (!Number.isInteger(pages) || pages < 1 || pages > 1e3) throw Error("Preview supports up to 1,000 pages.");
         const selected = Math.min(page, pages);
-        await exec("/usr/bin/timeout", ["--signal=KILL", "15s", "/usr/bin/pdftoppm", "-f", String(selected), "-l", String(selected), "-singlefile", "-scale-to", "1200", "-png", path, base], { timeout: 17e3, maxBuffer: 8192 });
-        await chmod(base + ".png", 384);
-        return { ...result, previewUrl: pathToFileURL(base + ".png").href, page: selected, pages };
+        await exec("/usr/bin/timeout", ["--signal=KILL", "15s", "/usr/bin/pdftoppm", "-f", String(selected), "-l", String(selected), "-singlefile", "-scale-to", "1200", "-png", path, rasterBase], { timeout: 17e3, maxBuffer: 8192 });
+        await chmod(rasterBase + ".png", 384);
+        return { ...result, previewUrl: pathToFileURL(rasterBase + ".png").href, page: selected, pages };
       } catch (e) {
         return { ...result, previewError: "PDF is ready, but inline preview is unavailable. Check that Poppler (pdfinfo and pdftoppm) is installed. " + String(e.message).slice(0, 200) };
       }

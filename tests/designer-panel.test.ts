@@ -75,3 +75,16 @@ test('layer operations preserve selection and make the last block frontmost',()=
  p.moveLayer(true);assert.equal(p.selectedIndex,1);assert.equal(p.doc.blocks[1].id,id);p.moveLayer(false);assert.equal(p.selected.id,id);assert.equal(p.selectedIndex,0);
  p.commitFrame(0,80,100,240,60);const count=p.undoStack.length;p.commitFrame(0,100,130,240,60);assert.equal(p.undoStack.length,count+1);p.history(false);assert.equal(p.selected.frame.x,80);
 });
+
+test('export populates the PDF view and conversion failures retain the external PDF',()=>{
+ for(const action of ['designPreview','designExport']){
+  const p=panel();p.addBlock('heading');p.setLayout(true);p.request(action);
+  assert.equal(p.showPdf,true);
+  output(p,{ok:true,url:'file:///output.pdf',previewUrl:'file:///preview.png',page:2,pages:3});exit(p);
+  assert.equal(p.previewUrl,'file:///preview.png');assert.equal(p.previewPage,2);assert.equal(p.canvasPage,2);assert.equal(p.previewStale,false);
+  p.request(action);output(p,{ok:true,url:'file:///fallback.pdf',previewError:'Install Poppler'});exit(p);
+  assert.equal(p.previewUrl,'');assert.equal(p.outputUrl,'file:///fallback.pdf');assert.equal(p.previewError,'Install Poppler');
+  p.request(action);output(p,{ok:false,error:'Rendering failed'});exit(p,1);
+  assert.equal(p.previewError,'Rendering failed');assert.equal(p.dirty,true);
+ }
+});

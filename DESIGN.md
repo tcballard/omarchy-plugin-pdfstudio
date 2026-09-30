@@ -4,7 +4,7 @@
 - ID: `io.github.tcballard.pdf-studio` (plugin identity; repository: `tcballard/omarchy-plugin-pdfstudio`).
 - Kind: panel; `Panel.qml` is a hosted Item with open/close lifecycle.
 - Invocation: shell summon/toggle; one window on the focused monitor when opened.
-- Theme: Omarchy popup background/text/border and corner radius; Qt Quick controls.
+- Theme: Omarchy popup background/text/border and corner radius; qs.Ui.Button actions and Qt Quick form controls.
 - State: transient editor in the kept panel; versioned saved drafts outside shell
   configuration, owned by the helper. Explicit save, no hidden invoice issuance.
 - Renderer: selected MIT pdfcn components + pinned Forme, embedded DejaVu fonts.
@@ -75,3 +75,14 @@ undo, layer order, real Qt mouse events at multiple scales, and rendered PDF
 coordinates, page counts and raster pixels. Live Wayland pointer/focus and monitor
 behaviour still require an Omarchy device. Rotation, nested layouts, multi-select,
 grouping, automatic overflow warnings and live PDF rendering are deferred.
+
+
+## Editor workspace
+
+File actions live in a menu and a toggleable document picker. The central page
+has an optional layers column; the inspector separates Content from Page and
+keeps frame coordinates collapsed until requested. Export returns the same
+raster preview as Preview, with the PNG stored only in cache. Generation and
+image-loading errors are visible in the page area, preserving Open PDF when
+PDF creation succeeded. Updates remain explicit; there is no automatic renderer
+running while the user types.
