@@ -46,14 +46,14 @@ undo/redo, page settings, a rendered page preview and reusable templates.
 invoice storage and numbering remain intact. Designer data lives in `designs.json`
 and imported PNG/JPEG assets under `assets/`, outside shell configuration.
 No remote image URLs, executable templates or HTML are accepted. Images are copied
-by content hash with byte/pixel limits. Preview rasterization uses Poppler's
+by content hash with byte/pixel limits. Preview rasterization in both editors uses Poppler's
 `pdfinfo` and `pdftoppm` (optional for the inline preview; PDF export remains usable
 without them). Fonts and the PDF renderer remain bundled. Preview refresh is
 explicit, keeping typing responsive. Free positioning is implemented in the follow-up below.
 
 ## Free layout
 
-The designer adds an opt-in free-layout mode, within the same hosted panel and
+Blank documents start in free layout; existing documents and flow presets retain their modes, within the same hosted panel and
 helper protocol. Each block stores page, x/y and width/height in PDF points from
 the top-left of the physical page. Array order is back-to-front painting order.
 Frames are bounded to their page, with a 24 × 12 pt minimum; up to 50 explicit
@@ -86,3 +86,8 @@ raster preview as Preview, with the PNG stored only in cache. Generation and
 image-loading errors are visible in the page area, preserving Open PDF when
 PDF creation succeeded. Updates remain explicit; there is no automatic renderer
 running while the user types.
+
+The shared PdfPage component renders a cached raster with fit-page/fit-width
+scrolling. Invoice preview and export use the same bounded Poppler helper as the
+designer, with the exported PDF retained on rasterization failure. The invoice
+editor switches between details and preview without leaving the hosted panel.

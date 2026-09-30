@@ -61,6 +61,7 @@ test('shipped designer works without node_modules and renders all block types an
   await cp(new URL('../dist',import.meta.url),join(dir,'dist'),{recursive:true});
   await cp(new URL('../renderer/fonts',import.meta.url),join(dir,'renderer/fonts'),{recursive:true});
   const run=(r:unknown)=>JSON.parse(execFileSync(process.execPath,[join(dir,'dist/renderer.mjs')],{cwd:dir,env:{...process.env,HOME:dir,XDG_DATA_HOME:join(dir,'data'),XDG_CACHE_HOME:join(dir,'cache')},input:JSON.stringify(r)+'\n',encoding:'utf8',timeout:25000}));
+  const blank=run({action:'designNew',preset:'blank'}).document;assert.equal(blank.layout,'free');assert.equal(blank.schema,2);assert.equal(blank.pageCount,1);
   const d=run({action:'designNew',preset:'report'}).document;assert.equal(d.blocks.length,6);
   const path=join(dir,'image.png');await writeFile(path,png);const imported=run({action:'designImport',path});assert.equal(imported.ok,true);await rm(path);
   d.blocks=[{...block('heading'),text:'Custom brochure',font:'serif'},

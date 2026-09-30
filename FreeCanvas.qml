@@ -3,6 +3,8 @@ import QtQuick.Controls
 
 Item {
   id:canvas
+  activeFocusOnTab:true
+  Accessible.role:Accessible.Pane;Accessible.name:"Document canvas"
   property var document: null
   property int selectedIndex: -1
   property int page: 1
@@ -10,17 +12,32 @@ Item {
   readonly property color paperColor: document && /^#[0-9a-f]{6}$/i.test(document.page.background)?document.page.background:"white"
   property bool snap: false
   property real zoom: 1
+  property bool fitWidth: false
   property string assetBaseUrl: ""
   readonly property real pageWidth: document ? (document.page.orientation==="landscape" ? (document.page.size==="A4"?841.89:792) : (document.page.size==="A4"?595.28:612)) : 595.28
   readonly property real pageHeight: document ? (document.page.orientation==="landscape" ? (document.page.size==="A4"?595.28:612) : (document.page.size==="A4"?841.89:792)) : 841.89
-  readonly property real scaleFactor: Math.max(0.1,Math.min((width-32)/pageWidth,(height-32)/pageHeight))*zoom
+  readonly property real scaleFactor: Math.max(0.1,(fitWidth?(width-32)/pageWidth:Math.min((width-32)/pageWidth,(height-32)/pageHeight)))*zoom
   signal selectBlock(int index)
   signal frameCommitted(int index,real x,real y,real w,real h)
   signal nudge(int dx,int dy)
   signal undoRequested(bool redo)
+  signal removeRequested()
+  signal duplicateRequested()
+  function revealSelection() {
+    if(!document || selectedIndex<0 || !document.blocks[selectedIndex])return
+    var f=document.blocks[selectedIndex].frame
+    if(!f || f.page!==page)return
+    var top=16+f.y*scaleFactor,bottom=top+f.height*scaleFactor
+    if(top<viewport.contentY || bottom>viewport.contentY+viewport.height)
+      viewport.contentY=Math.max(0,Math.min(viewport.contentHeight-viewport.height,top-24))
+  }
+  onSelectedIndexChanged:Qt.callLater(revealSelection)
+  onPageChanged:Qt.callLater(revealSelection)
   function bounded(value,min,max) {return Math.max(min,Math.min(max,Math.round(value*10)/10))}
   function snapped(value) {return snap?Math.round(value/8)*8:value}
   Keys.onPressed:function(event) {
+    if(event.key===Qt.Key_Delete || event.key===Qt.Key_Backspace){removeRequested();event.accepted=true;return}
+    if(event.key===Qt.Key_D && (event.modifiers & Qt.ControlModifier)){duplicateRequested();event.accepted=true;return}
     var delta=(event.modifiers & Qt.ShiftModifier)?10:1
     if(event.key===Qt.Key_Left){nudge(-delta,0);event.accepted=true}
     else if(event.key===Qt.Key_Right){nudge(delta,0);event.accepted=true}
@@ -151,7 +168,7 @@ Item {
               color:"#1689df";border.color:"white";border.width:1/canvas.scaleFactor
               MouseArea {
                 objectName:"resizeHandle-"+box.sourceIndex
-                anchors.fill:parent;preventStealing:true;cursorShape:Qt.SizeFDiagCursor
+                anchors.fill:parent;anchors.margins:-6/canvas.scaleFactor;preventStealing:true;cursorShape:Qt.SizeFDiagCursor
                 property point start
                 property var initial
                 onPressed:function(mouse){canvas.forceActiveFocus();initial=JSON.parse(JSON.stringify(box.frame));start=mapToItem(coordinates,mouse.x,mouse.y)}

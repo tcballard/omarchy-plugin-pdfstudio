@@ -32,9 +32,9 @@ PDF Studio brings document design to an Omarchy panel. Arrange text, images, tab
 Open PDF Studio and use **File** to start a document, or **+ Insert** to add
 content to the blank page. **Layers** shows the block list; select a block there
 or on the free canvas to edit it in **Content**. Use the layer arrows to change
-its order. Text flows down the page and continues onto
-new pages in **Flow layout**. Choose **Free layout** in **Page setup** to place
-blocks yourself. Nested layouts are not supported yet.
+its order. New blank documents start in **Free layout**, ready to drag and resize.
+Letter, report and brochure presets use **Flow layout**, where text continues
+onto new pages. Switch modes in **Page setup**. Nested layouts are not supported yet.
 Two-column blocks contain two editable text areas. Tables support up to 40 rows
 and six columns, with an optional repeated header row.
 
@@ -43,7 +43,9 @@ resize it. **Position & size…** provides X, Y, width, height and page controls
 (72 pt = one inch), measured from the top-left of the page. **Snap 8 pt** enables
 grid snapping; the zoom selector enlarges the canvas with scrollbars. With canvas
 focus, arrow keys move the selected block by 1 pt, or 10 pt with Shift. Ctrl+Z
-undoes and Ctrl+Shift+Z redoes; each drag or resize is one undo step.
+undoes and Ctrl+Shift+Z redoes; each drag or resize is one undo step. Delete removes
+the selected block and Ctrl+D duplicates it while the canvas has focus. **Fit width**
+makes content readable while you scroll; **Fit page** shows the complete page.
 
 The layer list runs back to front. **To back / To front** changes which block
 covers another. Use **+ Page** for another page, and the block's Page control to
@@ -80,7 +82,9 @@ accept up to 4,000 characters and table cells up to 300. Colour fields use
 `#RRGGBB`. The helper reports invalid values without discarding your edits.
 
 Choose **File → Invoice editor** for the dedicated invoice form. Invoice preview/export saves
-its draft first. Each line rounds half-up to cents/pence, then tax rounds half-up
+its draft first, then displays the result in the **PDF preview** tab. Use
+**Invoice details** to return to editing, or **Open PDF** for your external viewer.
+Addresses, payment details and notes accept multiple lines. Each line rounds half-up to cents/pence, then tax rounds half-up
 on the subtotal. No tax-inclusive pricing or mixed rates yet. Invoices support
 100 line items; business/customer addresses, notes and payment fields accept
 500 characters, and line descriptions accept 200.
@@ -88,7 +92,7 @@ on the subtotal. No tax-inclusive pricing or mixed rates yet. Invoices support
 ## Try the development checkout
 
 Requirements: Omarchy Quattro, Node.js 22+, Git, util-linux (`/usr/bin/flock`) and a PDF viewer.
-Inline designer previews also need Poppler (`/usr/bin/pdfinfo` and
+Inline PDF previews also need Poppler (`/usr/bin/pdfinfo` and
 `/usr/bin/pdftoppm`) and coreutils (`/usr/bin/timeout`). Without Poppler, the PDF
 still renders and can be opened in your viewer. On Arch, install it with `sudo pacman -S poppler`. Current Omarchy
 installs configure Node.js through Mise; it must be available to the shell.

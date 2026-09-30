@@ -134,3 +134,19 @@ Editor repair after on-device feedback:
 - Still unverified: live Omarchy theme/control rendering, Quickshell process
   transport, the user's original blank-preview cause, native file picker and
   external viewer. This pass is not evidence of marketplace readiness.
+
+
+Full Qt UX pass (30 September 2026):
+
+- [Captured audit and before/after screens](docs/ux-audit/README.md): 14 states,
+  1280×850, 1040×850 and 900×650. Uses the actual upstream Ui.Button,
+  BorderSurface, BorderOverlay and Style computations with a controlled palette;
+  the live style watchers, layer shell and helper Process transport are replaced.
+- Blank documents now start in free layout. Both editors display generated PDFs;
+  the shared viewer supports fit-page and fit-width scrolling. Invoice preview
+  tests assert a usable image height as well as decoding and visibility.
+- 34 Node tests, typecheck, bundle reproduction and all three Qt interaction
+  runs pass locally. New checks include multipage invoices, cache failure,
+  invoice Preview/Export display, and canvas Delete/Ctrl+D.
+- These captures do not verify the native file picker, actual shell transport,
+  screen readers, touchpad scrolling, theme changes or live window lifecycle.

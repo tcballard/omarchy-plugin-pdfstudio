@@ -26,6 +26,7 @@ with tempfile.TemporaryDirectory(prefix='pdfstudio-qt-') as directory:
     fixture = pathlib.Path(directory)
     designer = '--designer' in sys.argv
     (fixture / 'FreeCanvas.qml').write_text((root / 'FreeCanvas.qml').read_text())
+    shutil.copy(root / 'PdfPage.qml', fixture / 'PdfPage.qml')
     shutil.copytree(root / 'renderer/fonts', fixture / 'renderer/fonts')
     source = (root / ('Designer.qml' if designer else 'InvoicePanel.qml')).read_text()
     # Keep all production controls, bindings and handlers. Replace only host
@@ -39,8 +40,8 @@ with tempfile.TemporaryDirectory(prefix='pdfstudio-qt-') as directory:
     (fixture / 'ui/Button.qml').write_text('''import QtQuick.Controls
 Button {property bool focusable:true;property bool bordered:false;property bool selected:false}''')
     source = source.replace('PanelWindow {', 'Window {')
-    source = source.replace('implicitWidth:', 'width:')
-    source = source.replace('implicitHeight:', 'height:')
+    source = source.replace('    implicitWidth:', '    width:')
+    source = source.replace('    implicitHeight:', '    height:')
     (fixture / 'InvoicePanel.qml').write_text(source)
     (fixture / 'qmldir').write_text('singleton Color 1.0 Color.qml\nsingleton Style 1.0 Style.qml\n')
     (fixture / 'Color.qml').write_text('''pragma Singleton
@@ -70,6 +71,7 @@ QtObject {property bool waitForEnd:false;property string text:"";signal streamFi
         draft = dict(schema=1,id=draft['id'],revision=0,title='Test document',template=False,
                      page=dict(size='A4',orientation='portrait',margin=40,background='#ffffff'),blocks=[])
     QMetaObject.invokeMethod(panel, 'setDoc', Q_ARG('QVariant', draft))
+    if designer: panel.setProperty('fitWidth', False)
     panel.setProperty('opened', True)
     panel.setProperty('dirty', True)
     window = panel.findChildren(QQuickWindow)[0]
@@ -161,6 +163,12 @@ QtObject {property bool waitForEnd:false;property string text:"";signal streamFi
             QTest.qWait(30)
             snapped = panel.property('doc').toVariant()['blocks'][0]['frame']
             assert snapped['x'] % 8 == 0 and snapped['y'] % 8 == 0, snapped
+            # Canvas shortcuts change objects, not text in the inspector.
+            count=len(panel.property('doc').toVariant()['blocks'])
+            QTest.keyClick(window, Qt.Key_D, Qt.ControlModifier)
+            assert len(panel.property('doc').toVariant()['blocks']) == count+1
+            QTest.keyClick(window, Qt.Key_Delete)
+            assert len(panel.property('doc').toVariant()['blocks']) == count
             window.grabWindow().save('/tmp/pdfstudio-free-qt.png')
         window.grabWindow().save('/tmp/pdfstudio-designer-qt.png')
         # Real shipped renderer -> production response handlers -> Qt image decoder.
@@ -188,7 +196,7 @@ QtObject {property bool waitForEnd:false;property string text:"";signal streamFi
             window.grabWindow().save('/tmp/pdfstudio-preview-qt.png')
         # At laptop logical sizes the canvas and inspector remain within the window.
         window.setWidth(1024);window.setHeight(720);QTest.qWait(30)
-        assert pdf_image.width()>300
+        assert pdf_image.width()>240
         assert pdf_image.mapToScene(QPointF(pdf_image.width(),0)).x()<window.width()
         window.grabWindow().save('/tmp/pdfstudio-compact-qt.png')
         panel.setProperty('previewUrl', QUrl.fromLocalFile(directory+'/missing.png').toString())
@@ -198,6 +206,19 @@ QtObject {property bool waitForEnd:false;property string text:"";signal streamFi
         assert any('missing.png' in message for message in messages), messages
         messages[:] = [message for message in messages if 'missing.png' not in message]
         panel.setProperty('dirty', True)
+    if not designer:
+        draft['number']='INV-QT'
+        QMetaObject.invokeMethod(panel, 'setDoc', Q_ARG('QVariant', draft))
+        for action in ['preview','export']:
+            QMetaObject.invokeMethod(panel, 'request', Q_ARG('QVariant', action), Q_ARG('QVariant', 0))
+            response=subprocess.run(['node',str(root/'dist/renderer.mjs')],input=json.dumps(dict(action=action,draft=draft))+'\n',env={**os.environ,'HOME':directory,'XDG_DATA_HOME':directory+'/data','XDG_CACHE_HOME':directory+'/cache'},text=True,capture_output=True,check=True,timeout=30).stdout
+            panel.findChild(QObject,'invoiceWorker').setProperty('running',False)
+            QMetaObject.invokeMethod(panel,'receiveOutput',Q_ARG('QVariant',response))
+            QMetaObject.invokeMethod(panel,'receiveExit',Q_ARG('QVariant',0),Q_ARG('QVariant',0))
+            QTest.qWait(200)
+            page=visual_item(window.contentItem(),'pdfImage')
+            assert page.isVisible() and page.property('progress')==1 and page.height()>250, messages
+        panel.setProperty('dirty',True)
     panel.setProperty('confirmAction', 'close')
     QTest.qWait(30)
     popup = next(obj for obj in panel.findChildren(QObject)

@@ -6,6 +6,7 @@ import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Hyprland
 import qs.Commons
+import qs.Ui as Ui
 
 Item {
   id: root
@@ -22,6 +23,12 @@ Item {
   property string status: ""
   property string outputPath: ""
   property string outputUrl: ""
+  property bool showPdf:false
+  property string previewUrl:""
+  property string previewError:""
+  property int previewPage:1
+  property int previewPages:1
+  property bool fitWidth:false
   property string totalLabel: ""
   property string pendingAction: ""
   property string confirmAction: ""
@@ -65,16 +72,18 @@ Item {
   function setDoc(d) {
     doc=JSON.parse(JSON.stringify(d)); lines.clear()
     d.items.forEach(function(x) { lines.append(x) })
-    dirty=false; outputPath="";outputUrl="";totalLabel=""
+    dirty=false;showPdf=false;previewUrl="";previewError="";previewPage=1;previewPages=1; outputPath="";outputUrl="";totalLabel=""
   }
   function edit(key,value) { doc[key]=value; dirty=true; outputPath="";totalLabel="" }
   function request(action, offset) {
     if (busy) return
     inFlight=true;helperStarted=false;receivedOutput=false;receivedExit=false
     responseText="";responseCode=-1;responseExitStatus=-1
+    if(action==="preview" || action==="export"){showPdf=true;previewError=""}
     worker.action=action
     worker.payload=JSON.stringify({action:action,
       draft:(action==="save" || action==="total" || action==="preview" || action==="export") && doc ? snapshot() : null,
+      page:previewPage,
       id:action==="load" ? pendingDraftId : null,
       offset:offset === undefined ? draftOffset : offset})
     status=action === "export" || action === "preview" ? "Rendering PDF…" : "Working…"
@@ -106,6 +115,7 @@ Item {
     pendingAction="";queuedAction="";followup.stop();inFlight=false
     responseText="";worker.payload=""
     status=String(message || "Operation failed.").slice(0,1024)
+    if(worker.action==="preview" || worker.action==="export")previewError=status
   }
   function receiveOutput(text) {
     if(!inFlight) return
@@ -133,7 +143,7 @@ Item {
       return response.drafts.every(function(d) {return d && typeof d.id==="string" && typeof d.number==="string"})
     }
     if(action==="total") return typeof response.total==="string" && typeof response.subtotal==="string" && typeof response.tax==="string"
-    if(action==="preview" || action==="export") return typeof response.path==="string" && typeof response.url==="string" && response.url.indexOf("file:///")===0
+    if(action==="preview" || action==="export") return typeof response.path==="string" && typeof response.url==="string" && response.url.indexOf("file:///")===0 && (!response.previewUrl || (typeof response.previewUrl==="string" && response.previewUrl.indexOf("file:///")===0 && Number.isInteger(response.page) && Number.isInteger(response.pages) && response.page>0 && response.page<=response.pages && response.pages<=1000))
     return false
   }
   function finishRequest() {
@@ -155,8 +165,8 @@ Item {
     if(response.draft) setDoc(response.draft)
     if(response.drafts) {drafts=response.drafts;draftOffset=response.offset;draftTotal=response.total}
     if(response.path) {
-      outputPath=response.path;outputUrl=response.url
-      status=worker.action === "preview" ? "Preview ready — open it below." : "PDF exported — open it below."
+      outputPath=response.path;outputUrl=response.url;previewUrl=response.previewUrl || "";previewError=response.previewError || (response.previewUrl?"":"The PDF has no page preview. Retry Preview or use Open PDF.");previewPage=response.page || 1;previewPages=response.pages || 1;showPdf=true
+      status=response.previewError || (worker.action === "preview" ? "Preview ready" : "PDF exported to Documents / PDF Studio")
     } else status=worker.action === "save" ? "Draft saved" : "Ready"
     responseText="";inFlight=false
     if(opened && (worker.action === "new" || worker.action === "save")) {
@@ -179,6 +189,7 @@ Item {
   ListModel { id: lines }
   Process {
     id: worker
+    objectName:"invoiceWorker"
     property string action: ""
     property string payload: ""
     command: ["node", root.basePath + "dist/renderer.mjs"]
@@ -198,6 +209,7 @@ Item {
     interval:50000;running:root.inFlight
     onTriggered:root.abortRequest("Operation timed out. Reopen the saved draft to check whether the save completed.")
   }
+  component Action: Ui.Button {focusable:true;Layout.minimumHeight:32;opacity:enabled?1:0.4;Accessible.role:Accessible.Button;Accessible.name:text}
   component Field: ColumnLayout {
     property string caption: ""
     property alias text: input.text
@@ -206,7 +218,25 @@ Item {
     Layout.fillWidth: true
     spacing: 4
     Label {text:parent.caption;color:Color.popups.text;opacity:0.7;font.pixelSize:12}
-    TextField {id:input;Layout.fillWidth:true;selectByMouse:true;maximumLength:parent.maximumLength;onTextEdited:parent.edited(text)}
+    TextField {id:input;implicitHeight:34;Accessible.name:parent.caption;Layout.fillWidth:true;selectByMouse:true;maximumLength:parent.maximumLength;onTextEdited:parent.edited(text)}
+  }
+  component Memo: ColumnLayout {
+    id:memo
+    property string caption:""
+    property string text:""
+    property int maximumLength:500
+    signal edited(string value)
+    Layout.fillWidth:true;spacing:4
+    Label {text:memo.caption;color:Color.popups.text;opacity:0.7;font.pixelSize:12}
+    ScrollView {
+      Layout.fillWidth:true;Layout.preferredHeight:76;clip:true
+      background:Rectangle {color:Qt.rgba(0,0,0,0.12);border.color:Color.popups.border}
+      TextArea {
+        padding:10;text:memo.text;wrapMode:TextEdit.Wrap;selectByMouse:true;textFormat:TextEdit.PlainText
+        Accessible.name:memo.caption
+        onTextChanged:if(activeFocus && text!==memo.text){if(text.length>memo.maximumLength)text=text.slice(0,memo.maximumLength);memo.edited(text)}
+      }
+    }
   }
   PanelWindow {
     id: window
@@ -236,13 +266,13 @@ Item {
         RowLayout {
           Label {text:"PDF Studio";font.pixelSize:24;font.bold:true;color:Color.popups.text}
           Label {text:"/  INVOICES";font.pixelSize:12;color:Color.popups.text;opacity:0.6;Layout.fillWidth:true}
-          Button {text:"Document designer";enabled:!root.busy;onClicked:root.transition("designer")}
-          Button {text:"Close";enabled:!root.busy;onClicked:root.transition("close")}
+          Action {text:"Document designer";enabled:!root.busy;onClicked:root.transition("designer")}
+          Action {text:"Close";enabled:!root.busy;onClicked:root.transition("close")}
         }
         RowLayout {
           enabled:!root.busy
-          Button {text:"New invoice";onClicked:root.transition("new")}
-          ComboBox {
+          Action {text:"New invoice";onClicked:root.transition("new")}
+          ComboBox {implicitHeight:32;
             id: draftPicker; Layout.fillWidth:true;model:root.drafts;textRole:"number"
             displayText:root.draftTotal ? "Saved drafts ("+(root.draftOffset+1)+"–"+(root.draftOffset+root.drafts.length)+" of "+root.draftTotal+")" : "No saved drafts yet"
             delegate:ItemDelegate {
@@ -252,13 +282,33 @@ Item {
             }
             onActivated:function(index) {root.transition("load",index)}
           }
-          Button {text:"Previous";enabled:root.draftOffset>0;onClicked:root.request("list",root.draftOffset-50)}
-          Button {text:"Next";enabled:root.draftOffset+50<root.draftTotal;onClicked:root.request("list",root.draftOffset+50)}
+          Action {text:"Previous";enabled:root.draftOffset>0;onClicked:root.request("list",root.draftOffset-50)}
+          Action {text:"Next";enabled:root.draftOffset+50<root.draftTotal;onClicked:root.request("list",root.draftOffset+50)}
           Label {text:root.dirty?"Unsaved changes":"";color:Color.popups.text}
-          Button {text:"Save draft";enabled:root.doc!==null;onClicked:root.request("save")}
+          Action {text:"Save draft";enabled:root.doc!==null;onClicked:root.request("save")}
+        }
+        RowLayout {
+          Action {text:"Invoice details";selected:!root.showPdf;enabled:!root.busy;onClicked:root.showPdf=false}
+          Action {text:"PDF preview";selected:root.showPdf;enabled:!root.busy && root.doc!==null;onClicked:if(root.outputPath!=="")root.showPdf=true;else root.savedAction("preview")}
+          Item {Layout.fillWidth:true}
+          ComboBox {visible:root.showPdf;model:["Fit page","Fit width"];currentIndex:root.fitWidth?1:0;Accessible.name:"Invoice preview zoom";onActivated:function(index){root.fitWidth=index===1}}
+        }
+        Rectangle {
+          visible:root.showPdf;Layout.fillWidth:true;Layout.fillHeight:true;color:Qt.rgba(0,0,0,0.18)
+          PdfPage {id:invoiceImage;anchors.fill:parent;source:root.previewUrl;fitWidth:root.fitWidth;visible:root.previewError==="" && !root.busy;onStatusChanged:if(status===Image.Error)root.previewError="The PDF image could not be displayed. Retry Preview or use Open PDF."}
+          Label {anchors.centerIn:parent;width:parent.width-64;wrapMode:Text.Wrap;horizontalAlignment:Text.AlignHCenter;color:Color.popups.text;textFormat:Text.PlainText;visible:root.busy || invoiceImage.status===Image.Loading || root.previewError!=="";text:root.busy || invoiceImage.status===Image.Loading?"Rendering invoice…":root.previewError}
+        }
+        RowLayout {
+          visible:root.showPdf;Layout.alignment:Qt.AlignHCenter
+          Action {text:"Previous page";enabled:!root.busy && root.previewPage>1;onClicked:{root.previewPage--;root.request("preview")}}
+          Label {text:root.previewPage+" / "+root.previewPages;color:Color.popups.text}
+          Action {text:"Next page";enabled:!root.busy && root.previewPage<root.previewPages;onClicked:{root.previewPage++;root.request("preview")}}
         }
         ScrollView {
-          Layout.fillWidth:true;Layout.fillHeight:true;clip:true
+          visible:!root.showPdf;Layout.fillWidth:true;Layout.fillHeight:true;clip:true
+          ScrollBar.horizontal.policy:ScrollBar.AlwaysOff
+            ScrollBar.vertical.policy:ScrollBar.AsNeeded
+            ScrollBar.vertical.active:true
           contentWidth:availableWidth
           ColumnLayout {
             width:parent.width;spacing:16;enabled:!root.busy && root.doc!==null
@@ -267,8 +317,8 @@ Item {
               Field {caption:"Customer";text:root.doc?root.doc.customer:"";onEdited:function(value){root.edit("customer",value)}}
             }
             RowLayout {
-              Field {caption:"Business address / contact";maximumLength:500;text:root.doc?root.doc.companyAddress:"";onEdited:function(value){root.edit("companyAddress",value)}}
-              Field {caption:"Customer address / contact";maximumLength:500;text:root.doc?root.doc.customerAddress:"";onEdited:function(value){root.edit("customerAddress",value)}}
+              Memo {caption:"Business address / contact";maximumLength:500;text:root.doc?root.doc.companyAddress:"";onEdited:function(value){root.edit("companyAddress",value)}}
+              Memo {caption:"Customer address / contact";maximumLength:500;text:root.doc?root.doc.customerAddress:"";onEdited:function(value){root.edit("customerAddress",value)}}
             }
             RowLayout {
               Field {caption:"Invoice number (blank = automatic)";text:root.doc?root.doc.number:"";onEdited:function(value){root.edit("number",value)}}
@@ -277,7 +327,7 @@ Item {
             }
             RowLayout {
               Label {text:"Currency";color:Color.popups.text}
-              ComboBox {model:["GBP","EUR","USD"];currentIndex:root.doc?model.indexOf(root.doc.currency):0;onActivated:root.edit("currency",currentText)}
+              ComboBox {implicitHeight:32;model:["GBP","EUR","USD"];currentIndex:root.doc?model.indexOf(root.doc.currency):0;onActivated:root.edit("currency",currentText)}
               Field {caption:"Tax % (applied to subtotal)";maximumLength:6;text:root.doc?root.doc.taxRate:"0";onEdited:function(value){root.edit("taxRate",value)}}
             }
             Label {text:"LINE ITEMS";font.bold:true;color:Color.popups.text}
@@ -292,24 +342,25 @@ Item {
                 Field {caption:"Description";maximumLength:200;text:description;onEdited:function(value){lines.setProperty(index,"description",value);root.dirty=true;root.outputPath="";root.totalLabel=""}}
                 Field {caption:"Quantity";maximumLength:13;Layout.maximumWidth:90;text:quantity;onEdited:function(value){lines.setProperty(index,"quantity",value);root.dirty=true;root.outputPath="";root.totalLabel=""}}
                 Field {caption:"Unit price";maximumLength:12;Layout.maximumWidth:120;text:price;onEdited:function(value){lines.setProperty(index,"price",value);root.dirty=true;root.outputPath="";root.totalLabel=""}}
-                Button {text:"Remove";enabled:lines.count>1;onClicked:{lines.remove(index);root.dirty=true;root.outputPath="";root.totalLabel=""}}
+                Action {text:"Remove";enabled:lines.count>1;onClicked:{lines.remove(index);root.dirty=true;root.outputPath="";root.totalLabel=""}}
               }
             }
-            Button {text:"+ Add line";enabled:lines.count<100;onClicked:{lines.append({description:"",quantity:"1",price:"0.00"});root.dirty=true;root.outputPath="";root.totalLabel=""}}
-            Field {caption:"Payment details";maximumLength:500;text:root.doc?root.doc.payment:"";onEdited:function(value){root.edit("payment",value)}}
-            Field {caption:"Notes";maximumLength:500;text:root.doc?root.doc.notes:"";onEdited:function(value){root.edit("notes",value)}}
+            Action {text:"+ Add line";enabled:lines.count<100;onClicked:{lines.append({description:"",quantity:"1",price:"0.00"});root.dirty=true;root.outputPath="";root.totalLabel=""}}
+            Memo {caption:"Payment details";maximumLength:500;text:root.doc?root.doc.payment:"";onEdited:function(value){root.edit("payment",value)}}
+            Memo {caption:"Notes";maximumLength:500;text:root.doc?root.doc.notes:"";onEdited:function(value){root.edit("notes",value)}}
           }
         }
         RowLayout {
-          Button {text:"Calculate total";enabled:!root.busy && root.doc!==null;onClicked:root.request("total")}
+          visible:!root.showPdf
+          Action {text:"Calculate total";enabled:!root.busy && root.doc!==null;onClicked:root.request("total")}
           Label {text:root.totalLabel;textFormat:Text.PlainText;color:Color.popups.text;Layout.fillWidth:true}
         }
         Label {text:root.status;textFormat:Text.PlainText;color:Color.popups.text;wrapMode:Text.Wrap;Layout.fillWidth:true}
         RowLayout {
           Label {text:"Stored locally · No account required";color:Color.popups.text;opacity:0.6;Layout.fillWidth:true}
-          Button {text:"Open PDF";visible:root.outputPath!=="";onClicked:{if(!Qt.openUrlExternally(root.outputUrl))root.status="Could not open the PDF. Check your default PDF viewer."}}
-          Button {text:"Preview";enabled:!root.busy && root.doc!==null;onClicked:root.savedAction("preview")}
-          Button {text:"Export PDF";enabled:!root.busy && root.doc!==null;onClicked:root.savedAction("export")}
+          Action {text:"Open PDF";visible:root.outputPath!=="";onClicked:{if(!Qt.openUrlExternally(root.outputUrl))root.status="Could not open the PDF. Check your default PDF viewer."}}
+          Action {text:"Preview";enabled:!root.busy && root.doc!==null;onClicked:root.savedAction("preview")}
+          Action {text:"Export PDF";enabled:!root.busy && root.doc!==null;onClicked:root.savedAction("export")}
         }
       }
       Popup {
@@ -325,9 +376,9 @@ Item {
           Label {text:"Save your changes?";font.pixelSize:22;color:Color.popups.text}
           Label {text:"This invoice has unsaved edits.";color:Color.popups.text}
           RowLayout {
-            Button {text:"Cancel";onClicked:root.confirmAction=""}
-            Button {text:"Discard";onClicked:root.discardChanges()}
-            Button {text:"Save";onClicked:{root.pendingAction=root.confirmAction;root.confirmAction="";root.request("save")}}
+            Action {text:"Cancel";onClicked:root.confirmAction=""}
+            Action {text:"Discard";onClicked:root.discardChanges()}
+            Action {text:"Save";onClicked:{root.pendingAction=root.confirmAction;root.confirmAction="";root.request("save")}}
           }
         }
       }
