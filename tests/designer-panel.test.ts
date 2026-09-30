@@ -10,7 +10,7 @@ const functions=[...qml.matchAll(/^  function /gm)].map(match=>{
  assert.ok(ts.isFunctionDeclaration(source.statements[0]));return source.statements[0].getText(source);
 }).join('\n');
 function panel(){
- const p:any={canvasPage:1,showPdf:false,assetBaseUrl:'',doc:null,opened:true,dirty:false,selectedIndex:-1,undoStack:[],redoStack:[],editGroup:'',types:BLOCK_TYPES,
+ const p:any={automaticPreview:false,backgroundPreview:false,renderSnapshot:"",autoPreview:{restart(){},stop(){}},colourPicker:{close(){}},pasteDialog:{close(){}},tableRowIndex:0,tableColumnIndex:0,canvasPage:1,showPdf:false,assetBaseUrl:'',doc:null,opened:true,dirty:false,selectedIndex:-1,undoStack:[],redoStack:[],editGroup:'',types:BLOCK_TYPES,
   status:'',outputUrl:'',previewUrl:'',previewStale:false,previewPage:1,previewPages:1,entries:[],entryOffset:0,entryTotal:0,showTemplates:false,
   confirmAction:'',transitionArgs:{},queuedAction:'',queuedArgs:{},importTarget:'',inFlight:false,helperStarted:false,receivedOutput:false,receivedExit:false,responseText:'',responseCode:-1,responseExitStatus:-1,
   invoicesRequested(){p.switched=true;},imagePicker:{close(){}},coalesce:{restart(){}},
@@ -18,6 +18,7 @@ function panel(){
   followup:{running:false,start(){this.running=true;},restart(){this.running=true;},stop(){this.running=false;}}
  };
  Object.defineProperty(p,'freeLayout',{get:()=>p.doc?.layout==='free'});
+ Object.defineProperty(p,'editingBusy',{get:()=>p.busy&&!p.backgroundPreview});
  Object.defineProperty(p,'busy',{get:()=>p.inFlight||p.worker.running||p.followup.running});
  Object.defineProperty(p,'selected',{get:()=>p.doc?.blocks[p.selectedIndex]??null});p.root=p;
  vm.createContext(p);vm.runInContext(functions,p);p.setDoc(newDesign());return p;
@@ -74,4 +75,38 @@ test('layer operations preserve selection and make the last block frontmost',()=
  const p=panel();p.addBlock('heading');p.addBlock('text');p.setLayout(true);p.selectedIndex=0;const id=p.selected.id;
  p.moveLayer(true);assert.equal(p.selectedIndex,1);assert.equal(p.doc.blocks[1].id,id);p.moveLayer(false);assert.equal(p.selected.id,id);assert.equal(p.selectedIndex,0);
  p.commitFrame(0,80,100,240,60);const count=p.undoStack.length;p.commitFrame(0,100,130,240,60);assert.equal(p.undoStack.length,count+1);p.history(false);assert.equal(p.selected.frame.x,80);
+});
+
+test('export populates the PDF view and conversion failures retain the external PDF',()=>{
+ for(const action of ['designPreview','designExport']){
+  const p=panel();p.addBlock('heading');p.setLayout(true);p.request(action);
+  assert.equal(p.showPdf,true);
+  output(p,{ok:true,url:'file:///output.pdf',previewUrl:'file:///preview.png',page:2,pages:3});exit(p);
+  assert.equal(p.previewUrl,'file:///preview.png');assert.equal(p.previewPage,2);assert.equal(p.canvasPage,2);assert.equal(p.previewStale,false);
+  p.request(action);output(p,{ok:true,url:'file:///fallback.pdf',previewError:'Install Poppler'});exit(p);
+  assert.equal(p.previewUrl,'');assert.equal(p.outputUrl,'file:///fallback.pdf');assert.equal(p.previewError,'Install Poppler');
+  p.request(action);output(p,{ok:false,error:'Rendering failed'});exit(p,1);
+  assert.equal(p.previewError,'Rendering failed');assert.equal(p.dirty,true);
+ }
+});
+
+test('background preview preserves typing and rejects stale output links without switching the canvas',()=>{
+ const p=panel();p.addBlock('heading');p.setLayout(true);p.showPdf=false;
+ p.request('designPreview',{automatic:true,page:1});assert.equal(p.editingBusy,false);
+ p.canvasText(p.selected.id,'text','Typed during render');
+ assert.equal(p.selected.text,'Typed during render');
+ output(p,{ok:true,url:'file:///old.pdf',previewUrl:'file:///old.png',page:1,pages:1});exit(p);
+ assert.equal(p.showPdf,false);assert.equal(p.previewStale,true);assert.equal(p.outputUrl,'');
+ p.request('designPreview',{automatic:true,page:1});output(p,{ok:true,url:'file:///new.pdf',previewUrl:'file:///new.png',page:1,pages:1});exit(p);
+ assert.equal(p.previewStale,false);assert.equal(p.outputUrl,'file:///new.pdf');assert.equal(p.showPdf,false);
+});
+test('table paste is atomic, expands from the selected cell and selected row deletion is undoable',()=>{
+ const p=panel();p.addBlock('table');p.tableRowIndex=1;p.tableColumnIndex=1;
+ assert.equal(p.pasteCells('A\tB\nC\tD'),true);assert.equal(p.selected.rows[1][1],'A');assert.equal(p.selected.rows[2][2],'D');
+ const before=JSON.stringify(p.selected.rows);assert.equal(p.pasteCells('x'.repeat(301)),false);assert.equal(JSON.stringify(p.selected.rows),before);
+ p.tableSize('row',-1);assert.equal(p.selected.rows[1][1],'C');p.history(false);assert.equal(JSON.stringify(p.selected.rows),before);
+});
+test('colour acceptance targets the block chosen when the dialog opened',()=>{
+ const p=panel();p.addBlock('heading');const id=p.selected.id;p.colourTarget='block';p.colourBlock=id;p.addBlock('text');
+ p.applyColour('#ff0000');assert.equal(p.doc.blocks[0].color,'#ff0000');assert.notEqual(p.selected.color,'#ff0000');p.history(false);assert.notEqual(p.doc.blocks[0].color,'#ff0000');
 });

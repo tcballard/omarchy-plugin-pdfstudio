@@ -4,7 +4,7 @@
 - ID: `io.github.tcballard.pdf-studio` (plugin identity; repository: `tcballard/omarchy-plugin-pdfstudio`).
 - Kind: panel; `Panel.qml` is a hosted Item with open/close lifecycle.
 - Invocation: shell summon/toggle; one window on the focused monitor when opened.
-- Theme: Omarchy popup background/text/border and corner radius; Qt Quick controls.
+- Theme: Omarchy popup background/text/border and corner radius; qs.Ui.Button actions and Qt Quick form controls.
 - State: transient editor in the kept panel; versioned saved drafts outside shell
   configuration, owned by the helper. Explicit save, no hidden invoice issuance.
 - Renderer: selected MIT pdfcn components + pinned Forme, embedded DejaVu fonts.
@@ -46,14 +46,14 @@ undo/redo, page settings, a rendered page preview and reusable templates.
 invoice storage and numbering remain intact. Designer data lives in `designs.json`
 and imported PNG/JPEG assets under `assets/`, outside shell configuration.
 No remote image URLs, executable templates or HTML are accepted. Images are copied
-by content hash with byte/pixel limits. Preview rasterization uses Poppler's
+by content hash with byte/pixel limits. Preview rasterization in both editors uses Poppler's
 `pdfinfo` and `pdftoppm` (optional for the inline preview; PDF export remains usable
 without them). Fonts and the PDF renderer remain bundled. Preview refresh is
 explicit, keeping typing responsive. Free positioning is implemented in the follow-up below.
 
 ## Free layout
 
-The designer adds an opt-in free-layout mode, within the same hosted panel and
+Blank documents start in free layout; existing documents and flow presets retain their modes, within the same hosted panel and
 helper protocol. Each block stores page, x/y and width/height in PDF points from
 the top-left of the physical page. Array order is back-to-front painting order.
 Frames are bounded to their page, with a 24 × 12 pt minimum; up to 50 explicit
@@ -75,3 +75,27 @@ undo, layer order, real Qt mouse events at multiple scales, and rendered PDF
 coordinates, page counts and raster pixels. Live Wayland pointer/focus and monitor
 behaviour still require an Omarchy device. Rotation, nested layouts, multi-select,
 grouping, automatic overflow warnings and live PDF rendering are deferred.
+
+
+## Editor workspace
+
+File actions live in a menu and a toggleable document picker. The central page
+has an optional layers column; the inspector separates Content from Page and
+keeps frame coordinates collapsed until requested. Export returns the same
+raster preview as Preview, with the PNG stored only in cache. Generation and
+image-loading errors are visible in the page area, preserving Open PDF when
+PDF creation succeeded. Updates remain explicit; there is no automatic renderer
+running while the user types.
+
+The shared PdfPage component renders a cached raster with fit-page/fit-width
+scrolling. Invoice preview and export use the same bounded Poppler helper as the
+designer, with the exported PDF retained on rasterization failure. The invoice
+editor switches between details and preview without leaving the hosted panel.
+
+## Live editing follow-up
+
+FreeCanvas provides a stable inline TextEdit outside the block Repeater. Double-click edits text/heading/columns; Ctrl+Enter finishes and Escape restores the session's original text. Tables support bounded TSV paste and selected row/column changes with separate undo steps. A themed Qt colour popup supplies visual page/text colour selection.
+
+Both editors debounce automatic previews by 800 ms, leave editing enabled during background rendering and compare render snapshots before accepting output links. Stale results trigger another preview without switching views. Invoice background previews use a temporary DRAFT number and never save/number drafts. Cache cleanup retains the current output and bounds generated preview files to 128 files / 128 MiB.
+
+Validation includes 39 Node tests, actual offscreen Qt double-click/typing/focus/cancel and timer checks, plus 19 rendered audit states. Live Quickshell transport, Wayland file selection and assistive technology still require on-device verification.

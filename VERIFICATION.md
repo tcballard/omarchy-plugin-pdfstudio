@@ -90,7 +90,7 @@ For the designer's live test, import a local PNG and JPEG through the native fil
 picker, edit and reorder blocks, refresh each page, export and compare the PDF.
 Save a template, use it twice, and verify each document remains independent.
 Test Save / Discard / Cancel when switching to Invoices and back, restore saved
-documents after a shell restart, and check the horizontal scroll on a small screen.
+documents after a shell restart, and check the canvas and inspector at small logical screen sizes.
 Inline preview is optional; verify the external-viewer fallback without Poppler.
 
 Free-layout extension:
@@ -114,3 +114,47 @@ scroll to page edges, check snapping, select overlapping layers, move blocks acr
 pages, save/reopen a template, and compare Refresh against the exported PDF. Check
 that a host hide during a drag cancels the unfinished gesture without losing earlier
 edits. Canvas text is a Qt approximation; the rendered PDF is the export reference.
+
+
+Editor repair after on-device feedback:
+
+- Export now rasterizes the selected page for the inline viewer as well as saving
+  the PDF. Raster images stay in XDG cache; only PDFs go to Documents / PDF Studio.
+  A conversion failure returns the PDF link and a visible preview error.
+- Both designer Qt runs now invoke the shipped helper for Preview and Export,
+  feed its output through the production response handlers, and verify the real
+  Qt image decoder displays the result. A missing-image check verifies the error
+  state preserves the external PDF link. The helper transport and Wayland surface
+  remain stubbed; Omarchy Ui.Button is represented by a Qt button contract stub.
+- Local checks: 33 Node tests, typecheck, bundle reproducibility, all three Qt
+  interaction runs, and inspection of offscreen layouts at 1280×850 and 1024×720.
+- File management is tucked into File; layers are optional, Content and Page are
+  separate inspector views, and geometry controls expand on request. There is
+  no whole-window minimum-width horizontal scroll. Actions use qs.Ui.Button.
+- Still unverified: live Omarchy theme/control rendering, Quickshell process
+  transport, the user's original blank-preview cause, native file picker and
+  external viewer. This pass is not evidence of marketplace readiness.
+
+
+Full Qt UX pass (30 September 2026):
+
+- [Captured audit and before/after screens](docs/ux-audit/README.md): 19 states,
+  1280×850, 1040×850 and 900×650. Uses the actual upstream Ui.Button,
+  BorderSurface, BorderOverlay and Style computations with a controlled palette;
+  the live style watchers, layer shell and helper Process transport are replaced.
+- Blank documents now start in free layout. Both editors display generated PDFs;
+  the shared viewer supports fit-page and fit-width scrolling. Invoice preview
+  tests assert a usable image height as well as decoding and visibility.
+- 39 Node tests, typecheck, bundle reproduction and all three Qt interaction
+  runs pass locally. New checks include multipage invoices, cache failure,
+  invoice Preview/Export display, and canvas Delete/Ctrl+D.
+- These captures do not verify the native file picker, actual shell transport,
+  screen readers, touchpad scrolling, theme changes or live window lifecycle.
+
+## Live editing follow-up
+
+FreeCanvas provides a stable inline TextEdit outside the block Repeater. Double-click edits text/heading/columns; Ctrl+Enter finishes and Escape restores the session's original text. Tables support bounded TSV paste and selected row/column changes with separate undo steps. A themed Qt colour popup supplies visual page/text colour selection.
+
+Both editors debounce automatic previews by 800 ms, leave editing enabled during background rendering and compare render snapshots before accepting output links. Stale results trigger another preview without switching views. Invoice background previews use a temporary DRAFT number and never save/number drafts. Cache cleanup retains the current output and bounds generated preview files to 128 files / 128 MiB.
+
+Validation includes 39 Node tests, actual offscreen Qt double-click/typing/focus/cancel and timer checks, plus 19 rendered audit states. Live Quickshell transport, Wayland file selection and assistive technology still require on-device verification.

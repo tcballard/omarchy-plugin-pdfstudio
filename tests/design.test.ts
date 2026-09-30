@@ -61,6 +61,7 @@ test('shipped designer works without node_modules and renders all block types an
   await cp(new URL('../dist',import.meta.url),join(dir,'dist'),{recursive:true});
   await cp(new URL('../renderer/fonts',import.meta.url),join(dir,'renderer/fonts'),{recursive:true});
   const run=(r:unknown)=>JSON.parse(execFileSync(process.execPath,[join(dir,'dist/renderer.mjs')],{cwd:dir,env:{...process.env,HOME:dir,XDG_DATA_HOME:join(dir,'data'),XDG_CACHE_HOME:join(dir,'cache')},input:JSON.stringify(r)+'\n',encoding:'utf8',timeout:25000}));
+  const blank=run({action:'designNew',preset:'blank'}).document;assert.equal(blank.layout,'free');assert.equal(blank.schema,2);assert.equal(blank.pageCount,1);
   const d=run({action:'designNew',preset:'report'}).document;assert.equal(d.blocks.length,6);
   const path=join(dir,'image.png');await writeFile(path,png);const imported=run({action:'designImport',path});assert.equal(imported.ok,true);await rm(path);
   d.blocks=[{...block('heading'),text:'Custom brochure',font:'serif'},
@@ -77,6 +78,9 @@ test('shipped designer works without node_modules and renders all block types an
   for(const phrase of ['Custom brochure','Text in a mono font','Left column content','Right column content','Second page','First item'])assert.ok(text.includes(phrase),text);
   assert.ok((await readFile(fileURLToPath(pdf.previewUrl))).length>100);
   const exported=run({action:'designExport',document:saved});assert.equal(exported.ok,true);assert.ok(exported.path.startsWith(join(dir,'Documents','PDF Studio')));
+  assert.ok(exported.previewUrl,exported.previewError);assert.equal(exported.pages,2);
+  assert.ok(fileURLToPath(exported.previewUrl).startsWith(join(dir,'cache')));
+  assert.equal((await readFile(fileURLToPath(exported.previewUrl))).subarray(1,4).toString(),'PNG');
   assert.equal(run({action:'designList'}).total,1);assert.equal(run({action:'designList',template:true}).total,1);
   saved.schema=2;saved.layout='free';saved.pageCount=2;
   saved.blocks=saved.blocks.filter((b:any)=>b.type!=='pageBreak').map((b:any,i:number)=>({...b,frame:{page:1,x:20+(i%2)*250,y:20+Math.floor(i/2)*150,width:220,height:120}}));

@@ -7,6 +7,8 @@ import pathlib
 import tempfile
 import sys
 import shutil
+import json
+import subprocess
 
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 os.environ['QT_QUICK_BACKEND'] = 'software'
@@ -24,6 +26,7 @@ with tempfile.TemporaryDirectory(prefix='pdfstudio-qt-') as directory:
     fixture = pathlib.Path(directory)
     designer = '--designer' in sys.argv
     (fixture / 'FreeCanvas.qml').write_text((root / 'FreeCanvas.qml').read_text())
+    shutil.copy(root / 'PdfPage.qml', fixture / 'PdfPage.qml')
     shutil.copytree(root / 'renderer/fonts', fixture / 'renderer/fonts')
     source = (root / ('Designer.qml' if designer else 'InvoicePanel.qml')).read_text()
     # Keep all production controls, bindings and handlers. Replace only host
@@ -32,9 +35,13 @@ with tempfile.TemporaryDirectory(prefix='pdfstudio-qt-') as directory:
                        if not line.startswith('import Quickshell')
                        and line != 'import qs.Commons'
                        and 'WlrLayershell.' not in line and 'exclusionMode:' not in line)
+    source = source.replace('import qs.Ui as Ui', 'import "ui" as Ui')
+    (fixture / 'ui').mkdir()
+    (fixture / 'ui/Button.qml').write_text('''import QtQuick.Controls
+Button {property bool focusable:true;property bool bordered:false;property bool selected:false}''')
     source = source.replace('PanelWindow {', 'Window {')
-    source = source.replace('implicitWidth:', 'width:')
-    source = source.replace('implicitHeight:', 'height:')
+    source = source.replace('    implicitWidth:', '    width:')
+    source = source.replace('    implicitHeight:', '    height:')
     (fixture / 'InvoicePanel.qml').write_text(source)
     (fixture / 'qmldir').write_text('singleton Color 1.0 Color.qml\nsingleton Style 1.0 Style.qml\n')
     (fixture / 'Color.qml').write_text('''pragma Singleton
@@ -55,6 +62,7 @@ QtObject {property bool waitForEnd:false;property string text:"";signal streamFi
     engine = QQmlEngine()
     component = QQmlComponent(engine, QUrl.fromLocalFile(str(fixture / 'InvoicePanel.qml')))
     panel = component.create()
+    if panel is not None: panel.setProperty('automaticPreview',False)
     assert panel is not None, [error.toString() for error in component.errors()]
     draft = dict(id='00000000-0000-4000-8000-000000000000', revision=1, number='INV-1',
                  date='2026-09-29', due='2026-09-29', company='Example', companyAddress='',
@@ -64,6 +72,7 @@ QtObject {property bool waitForEnd:false;property string text:"";signal streamFi
         draft = dict(schema=1,id=draft['id'],revision=0,title='Test document',template=False,
                      page=dict(size='A4',orientation='portrait',margin=40,background='#ffffff'),blocks=[])
     QMetaObject.invokeMethod(panel, 'setDoc', Q_ARG('QVariant', draft))
+    if designer: panel.setProperty('fitWidth', False)
     panel.setProperty('opened', True)
     panel.setProperty('dirty', True)
     window = panel.findChildren(QQuickWindow)[0]
@@ -155,8 +164,88 @@ QtObject {property bool waitForEnd:false;property string text:"";signal streamFi
             QTest.qWait(30)
             snapped = panel.property('doc').toVariant()['blocks'][0]['frame']
             assert snapped['x'] % 8 == 0 and snapped['y'] % 8 == 0, snapped
+            # Real double-click starts a stable editor outside the block Repeater.
+            box=visual_item(window.contentItem(),'freeBlock-0')
+            QTest.mouseDClick(window,Qt.LeftButton,Qt.NoModifier,box.mapToScene(QPointF(20,20)).toPoint())
+            QTest.qWait(40)
+            editor=visual_item(window.contentItem(),'canvasTextEditor')
+            assert editor.property('activeFocus'), messages
+            QTest.keyClick(window,Qt.Key_A,Qt.ControlModifier)
+            for letter in 'Canvas text':QTest.keyClick(window,Qt.Key(ord(letter.upper())))
+            assert panel.property('doc').toVariant()['blocks'][0]['text']=='canvas text', panel.property('doc').toVariant()
+            assert editor.property('activeFocus'), 'Typing recreated the canvas editor'
+            QTest.keyClick(window,Qt.Key_Return,Qt.ControlModifier)
+            assert not panel.findChild(QObject,'freeCanvas').property('textEditing')
+            # Escape cancels just this text session, and the debounce fires without blocking typing.
+            box=visual_item(window.contentItem(),'freeBlock-0')
+            QTest.mouseDClick(window,Qt.LeftButton,Qt.NoModifier,box.mapToScene(QPointF(20,20)).toPoint())
+            QTest.keyClick(window,Qt.Key_A,Qt.ControlModifier)
+            QTest.keyClick(window,Qt.Key_X)
+            QTest.keyClick(window,Qt.Key_Escape)
+            assert panel.property('doc').toVariant()['blocks'][0]['text']=='canvas text'
+            assert panel.property('opened')
+            panel.setProperty('automaticPreview',True)
+            QTest.qWait(900)
+            assert panel.property('backgroundPreview') and not panel.property('editingBusy')
+            panel.setProperty('automaticPreview',False)
+            panel.findChild(QObject,'pdfWorker').setProperty('running',False)
+            QMetaObject.invokeMethod(panel,'failRequest',Q_ARG('QVariant','Fixture transport stopped'))
+            # Canvas shortcuts change objects, not text in the inspector.
+            count=len(panel.property('doc').toVariant()['blocks'])
+            QTest.keyClick(window, Qt.Key_D, Qt.ControlModifier)
+            assert len(panel.property('doc').toVariant()['blocks']) == count+1
+            QTest.keyClick(window, Qt.Key_Delete)
+            assert len(panel.property('doc').toVariant()['blocks']) == count
             window.grabWindow().save('/tmp/pdfstudio-free-qt.png')
         window.grabWindow().save('/tmp/pdfstudio-designer-qt.png')
+        # Real shipped renderer -> production response handlers -> Qt image decoder.
+        # Only the Quickshell Process transport is replaced here.
+        preview_doc = panel.property('doc').toVariant()
+        preview_doc['blocks'] = preview_doc['blocks'][:1]
+        QMetaObject.invokeMethod(panel, 'setDoc', Q_ARG('QVariant', preview_doc))
+        worker = panel.findChild(QObject, 'pdfWorker')
+        for action in ['designPreview','designExport']:
+            QMetaObject.invokeMethod(panel, 'request', Q_ARG('QVariant', action), Q_ARG('QVariant', {'page':1}))
+            response = subprocess.run(['node', str(root / 'dist/renderer.mjs')],
+                input=json.dumps(dict(action=action,document=preview_doc,page=1))+'\n',
+                env={**os.environ,'HOME':directory,'XDG_DATA_HOME':directory+'/data','XDG_CACHE_HOME':directory+'/cache'},
+                text=True,capture_output=True,check=True,timeout=30).stdout
+            assert json.loads(response).get('previewUrl'), response
+            worker.setProperty('running', False)
+            QMetaObject.invokeMethod(panel, 'receiveOutput', Q_ARG('QVariant', response))
+            QMetaObject.invokeMethod(panel, 'receiveExit', Q_ARG('QVariant', 0), Q_ARG('QVariant', 0))
+            pdf_image = visual_item(window.contentItem(), 'pdfImage')
+            for _ in range(100):
+                QTest.qWait(20)
+                if pdf_image.property('progress') == 1: break
+            assert pdf_image.property('visible') and pdf_image.property('progress') == 1, messages
+            assert panel.property('previewError') == '', messages
+            window.grabWindow().save('/tmp/pdfstudio-preview-qt.png')
+        # At laptop logical sizes the canvas and inspector remain within the window.
+        window.setWidth(1024);window.setHeight(720);QTest.qWait(30)
+        assert pdf_image.width()>240
+        assert pdf_image.mapToScene(QPointF(pdf_image.width(),0)).x()<window.width()
+        window.grabWindow().save('/tmp/pdfstudio-compact-qt.png')
+        panel.setProperty('previewUrl', QUrl.fromLocalFile(directory+'/missing.png').toString())
+        QTest.qWait(100)
+        assert 'could not be displayed' in panel.property('previewError')
+        assert panel.property('outputUrl').endswith('.pdf')
+        assert any('missing.png' in message for message in messages), messages
+        messages[:] = [message for message in messages if 'missing.png' not in message]
+        panel.setProperty('dirty', True)
+    if not designer:
+        draft['number']='INV-QT'
+        QMetaObject.invokeMethod(panel, 'setDoc', Q_ARG('QVariant', draft))
+        for action in ['preview','export']:
+            QMetaObject.invokeMethod(panel, 'request', Q_ARG('QVariant', action), Q_ARG('QVariant', 0))
+            response=subprocess.run(['node',str(root/'dist/renderer.mjs')],input=json.dumps(dict(action=action,draft=draft))+'\n',env={**os.environ,'HOME':directory,'XDG_DATA_HOME':directory+'/data','XDG_CACHE_HOME':directory+'/cache'},text=True,capture_output=True,check=True,timeout=30).stdout
+            panel.findChild(QObject,'invoiceWorker').setProperty('running',False)
+            QMetaObject.invokeMethod(panel,'receiveOutput',Q_ARG('QVariant',response))
+            QMetaObject.invokeMethod(panel,'receiveExit',Q_ARG('QVariant',0),Q_ARG('QVariant',0))
+            QTest.qWait(200)
+            page=visual_item(window.contentItem(),'pdfImage')
+            assert page.isVisible() and page.property('progress')==1 and page.height()>250, messages
+        panel.setProperty('dirty',True)
     panel.setProperty('confirmAction', 'close')
     QTest.qWait(30)
     popup = next(obj for obj in panel.findChildren(QObject)

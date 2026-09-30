@@ -7,10 +7,16 @@ import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Hyprland
 import qs.Commons
+import qs.Ui as Ui
 
 Item {
   id: root
   signal invoicesRequested()
+  property bool automaticPreview:true
+  property bool backgroundPreview:false
+  property string renderSnapshot:""
+  readonly property bool editingBusy:busy && !backgroundPreview
+  onAutomaticPreviewChanged:if(automaticPreview)schedulePreview();else autoPreview.stop()
   property bool opened: false
   property var targetScreen: null
   property var doc: null
@@ -18,10 +24,16 @@ Item {
   readonly property bool freeLayout: doc!==null && doc.layout==="free"
   property int canvasPage: 1
   property bool showPdf: false
+  property bool libraryVisible: false
+  property bool layersVisible: false
+  property bool pageSettings: false
+  property bool frameSettings: false
+  property string previewError: ""
   property string assetBaseUrl: ""
   property bool snapToGrid: false
   property real canvasZoom: 1
-  onSelectedIndexChanged: {if(freeLayout && selected && selected.frame)canvasPage=selected.frame.page}
+  property bool fitWidth: true
+  onSelectedIndexChanged: {if(selectedIndex>=0)pageSettings=false;tableRowIndex=0;tableColumnIndex=0;if(freeLayout && selected && selected.frame)canvasPage=selected.frame.page}
 
   readonly property var selected: doc && selectedIndex>=0 && selectedIndex<doc.blocks.length ? doc.blocks[selectedIndex] : null
   property bool dirty: false
@@ -42,6 +54,10 @@ Item {
   property var transitionArgs: ({})
   property string queuedAction: ""
   property var queuedArgs: ({})
+  property int tableRowIndex:0
+  property int tableColumnIndex:0
+  property string colourTarget:""
+  property string colourBlock:""
   property string importTarget: ""
   property bool inFlight: false
   property bool helperStarted: false
@@ -63,16 +79,16 @@ Item {
     opened=true
     if(!doc && !busy) request("designNew",{preset:"blank"})
   }
-  function close() {imagePicker.close();opened=false;confirmAction="";queuedAction="";followup.stop()}
+  function close() {autoPreview.stop();pasteDialog.close();colourPicker.close();imagePicker.close();opened=false;confirmAction="";queuedAction="";followup.stop()}
   function setDoc(d) {
     doc=clone(d);selectedIndex=d.blocks.length ? 0 : -1;dirty=false
-    undoStack=[];redoStack=[];editGroup="";outputUrl="";previewUrl="";previewPage=1;previewPages=1;previewStale=false;canvasPage=d.layout==="free" && d.blocks.length?d.blocks[0].frame.page:1;showPdf=false
+    undoStack=[];redoStack=[];editGroup="";outputUrl="";previewUrl="";previewError="";previewPage=1;previewPages=1;previewStale=false;canvasPage=d.layout==="free" && d.blocks.length?d.blocks[0].frame.page:1;showPdf=false;schedulePreview()
   }
   function uuid() {return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,function(c){var r=Math.floor(Math.random()*16);return (c==="x"?r:(r&3|8)).toString(16)})}
   function change(next,group) {
-    if(busy || !doc || confirmAction!=="") return
+    if(editingBusy || !doc || confirmAction!=="") return
     if(!group || editGroup!==group) undoStack=undoStack.concat([clone(doc)]).slice(-30)
-    editGroup=group || "";coalesce.restart();redoStack=[];doc=next;dirty=true;previewStale=true;outputUrl=""
+    editGroup=group || "";coalesce.restart();redoStack=[];doc=next;dirty=true;previewStale=true;outputUrl="";schedulePreview()
   }
   function edit(key,value) {var d=clone(doc);d[key]=value;change(d,"document-"+key)}
   function dimensions(d) {var size=d.page.size==="A4"?[595.28,841.89]:[612,792];return d.page.orientation==="landscape"?[size[1],size[0]]:size}
@@ -108,7 +124,7 @@ Item {
       d.blocks.forEach(function(b){delete b.frame});delete d.layout;delete d.pageCount;d.schema=1
     }
     change(d,"");selectedIndex=d.blocks.length?0:-1;canvasPage=free && d.blocks.length?d.blocks[0].frame.page:1;showPdf=false;previewUrl=""
-    status=free?"Free layout enabled. Drag and resize blocks; content outside a frame is clipped. Refresh to check the exact PDF.":"Flow layout restored in page / top-to-bottom order. Undo restores positioning."
+    status=free?"Free layout · Drag and resize blocks. Preview PDF checks the exact output.":"Flow layout restored in page / top-to-bottom order. Undo restores positioning."
   }
   function commitFrame(index,x,y,w,h) {
     if(!freeLayout || index<0 || index>=doc.blocks.length)return
@@ -165,19 +181,30 @@ Item {
     var d=clone(doc),b=clone(selected);b.id=uuid();if(freeLayout){b.frame.x+=12;b.frame.y+=12;b.frame=fitFrame(b.frame,d)}d.blocks.splice(selectedIndex+1,0,b);change(d,"");selectedIndex++
   }
   function history(redo) {
-    if(busy || !doc || confirmAction!=="")return
+    if(editingBusy || !doc || confirmAction!=="")return
     var from=redo?redoStack:undoStack;if(!from.length)return
     var d=clone(from[from.length-1]);d.revision=doc.revision
     if(redo){redoStack=from.slice(0,-1);undoStack=undoStack.concat([clone(doc)]).slice(-30)}
     else {undoStack=from.slice(0,-1);redoStack=redoStack.concat([clone(doc)]).slice(-30)}
-    doc=d;selectedIndex=Math.min(selectedIndex,d.blocks.length-1);canvasPage=d.layout==="free"?Math.min(canvasPage,d.pageCount):1;showPdf=false;dirty=true;previewStale=true;outputUrl="";editGroup=""
+    doc=d;selectedIndex=Math.min(selectedIndex,d.blocks.length-1);canvasPage=d.layout==="free"?Math.min(canvasPage,d.pageCount):1;showPdf=false;dirty=true;previewStale=true;outputUrl="";editGroup="";schedulePreview()
   }
   function tableCell(row,col,text) {var rows=clone(selected.rows);rows[row][col]=text;blockEdit("rows",rows)}
   function tableSize(axis,delta) {
-    var rows=clone(selected.rows)
-    if(axis==="row") {if(delta>0 && rows.length<40)rows.push(rows[0].map(function(){return ""}));else if(delta<0 && rows.length>1)rows.pop()}
-    else {if(delta>0 && rows[0].length<6)rows.forEach(function(r){r.push("")});else if(delta<0 && rows[0].length>1)rows.forEach(function(r){r.pop()})}
-    blockEdit("rows",rows)
+    var rows=clone(selected.rows),r=Math.min(tableRowIndex,rows.length-1),c=Math.min(tableColumnIndex,rows[0].length-1)
+    if(axis==="row") {if(delta>0 && rows.length<40)rows.splice(r+1,0,rows[0].map(function(){return ""}));else if(delta<0 && rows.length>1)rows.splice(r,1)}
+    else {if(delta>0 && rows[0].length<6)rows.forEach(function(row){row.splice(c+1,0,"")});else if(delta<0 && rows[0].length>1)rows.forEach(function(row){row.splice(c,1)})}
+    var d=clone(doc);d.blocks[selectedIndex].rows=rows;change(d,"");tableRowIndex=Math.min(r,rows.length-1);tableColumnIndex=Math.min(c,rows[0].length-1)
+  }
+  function pasteCells(text) {
+    if(!selected || selected.type!=="table")return false
+    var data=String(text).replace(/\r\n?/g,"\n").replace(/\n$/,"").split("\n").map(function(row){return row.split("\t")})
+    var r=Math.min(tableRowIndex,selected.rows.length-1),c=Math.min(tableColumnIndex,selected.rows[0].length-1),width=Math.max.apply(null,data.map(function(row){return row.length}))
+    if(data.length+r>40 || width+c>6 || data.some(function(row){return row.some(function(cell){return cell.length>300})})){status="Paste supports up to 40 rows, 6 columns and 300 characters per cell. Nothing was changed.";return false}
+    var rows=clone(selected.rows),cols=Math.max(rows[0].length,c+width)
+    while(rows.length<r+data.length)rows.push([])
+    rows.forEach(function(row){while(row.length<cols)row.push("")})
+    data.forEach(function(row,i){row.forEach(function(cell,j){rows[r+i][c+j]=cell})})
+    var d=clone(doc);d.blocks[selectedIndex].rows=rows;change(d,"");return true
   }
   function transition(action,args) {
     if(busy || confirmAction!=="")return
@@ -207,9 +234,12 @@ Item {
     // UTF-8 may use four bytes per character; the helper enforces the exact byte limit.
     if(serialized.length>262144){status="Document is too large. Shorten some text or tables.";queuedAction="";return}
     inFlight=true;helperStarted=false;receivedOutput=false;receivedExit=false;responseText="";responseCode=-1;responseExitStatus=-1
+    backgroundPreview=action==="designPreview" && !!payload.automatic
+    renderSnapshot=JSON.stringify(doc)
+    if(action==="designPreview" || action==="designExport"){previewError="";if(!backgroundPreview)showPdf=true}
     worker.action=action;worker.payload=serialized;status=action==="designPreview" || action==="designExport" ? "Rendering PDF…":"Working…";worker.running=true
   }
-  function failRequest(message) {inFlight=false;responseText="";worker.payload="";queuedAction="";followup.stop();status=String(message || "Operation failed. Your edits are still here.").slice(0,1024)}
+  function failRequest(message) {var obsolete=backgroundPreview && renderSnapshot!==JSON.stringify(doc);backgroundPreview=false;inFlight=false;responseText="";worker.payload="";queuedAction="";followup.stop();if(obsolete){schedulePreview();return}status=String(message || "Operation failed. Your edits are still here.").slice(0,1024);if(worker.action==="designPreview" || worker.action==="designExport")previewError=status}
   function receiveOutput(text) {if(!inFlight)return;responseText=String(text);receivedOutput=true;finishRequest()}
   function receiveExit(code,exitStatus) {if(!inFlight)return;responseCode=code;responseExitStatus=exitStatus;receivedExit=true;finishRequest()}
   function validResponse(r) {
@@ -229,7 +259,7 @@ Item {
     if(!r.ok){failRequest(r.error);return}
     if(responseCode!==0 || responseExitStatus!==0){failRequest("Helper stopped unexpectedly. Reload the saved document to check whether the save completed.");return}
     if(!validResponse(r)){failRequest("Incomplete helper response. Your edits have been kept.");return}
-    var action=worker.action;inFlight=false;responseText=""
+    var action=worker.action,wasBackground=backgroundPreview,stale=wasBackground && renderSnapshot!==JSON.stringify(doc);backgroundPreview=false;inFlight=false;responseText=""
     if(r.assetBaseUrl)assetBaseUrl=r.assetBaseUrl
     if(r.document){
       if(action==="designSave"){doc=clone(r.document);dirty=false;editGroup=""}
@@ -240,20 +270,44 @@ Item {
       var d=clone(doc),i=d.blocks.findIndex(function(b){return b.id===importTarget && b.type==="image"})
       if(i>=0){undoStack=undoStack.concat([clone(doc)]).slice(-30);redoStack=[];d.blocks[i].asset=r.asset;doc=d;dirty=true;previewStale=true;outputUrl="";editGroup=""}
     }
-    if(r.url)outputUrl=r.url
-    if(action==="designPreview") {previewUrl=r.previewUrl || "";previewPage=r.page || 1;previewPages=r.pages || 1;previewStale=false;if(freeLayout){showPdf=true;canvasPage=previewPage}}
-    status=action==="designSave"?"Document saved":action==="designTemplate"?"Template saved — select Templates to use it":action==="designExport"?"PDF exported to Documents / PDF Studio":action==="designPreview"?(r.previewError || "Preview ready"):"Ready"
+    if(r.url && !stale)outputUrl=r.url
+    if(action==="designPreview" || action==="designExport") {previewError=r.previewError || "";previewUrl=r.previewUrl || "";previewPage=r.page || 1;previewPages=r.pages || 1;previewStale=stale;if(freeLayout && !wasBackground){showPdf=true;canvasPage=previewPage}}
+    status=action==="designSave"?"Document saved":action==="designTemplate"?"Template saved — select Templates to use it":action==="designExport"?(r.previewError || "PDF exported to Documents / PDF Studio"):action==="designPreview"?(r.previewError || "Preview ready"):"Ready"
+    if(stale)schedulePreview()
+    if(action==="designImport")schedulePreview()
     if(opened && queuedAction)followup.start()
     else if(opened && (action==="designNew" || action==="designSave" || action==="designTemplate")){queuedAction="designList";queuedArgs={template:showTemplates,offset:0};followup.start()}
   }
+  function schedulePreview() {if(automaticPreview && opened && doc)autoPreview.restart()}
+  function livePreview() {
+    if(!automaticPreview || !opened || !doc)return
+    if(busy || confirmAction!==""){autoPreview.restart();return}
+    request("designPreview",{page:freeLayout?canvasPage:previewPage,automatic:true})
+  }
+  function chooseColour(target) {
+    colourTarget=target;colourBlock=selected?selected.id:""
+    colourPicker.selectedColor=target==="page"?doc.page.background:selected.color
+    colourPicker.open()
+  }
+  function applyColour(value) {
+    if(colourTarget==="page")pageEdit("background",value)
+    else {var i=doc.blocks.findIndex(function(b){return b.id===colourBlock});if(i<0)return;var d=clone(doc);d.blocks[i].color=value;change(d,colourBlock+"color")}
+  }
+  function canvasText(id,key,text) {
+    var index=doc?doc.blocks.findIndex(function(b){return b.id===id}):-1
+    if(index<0 || text.length>4000)return
+    var d=clone(doc);d.blocks[index][key]=text;change(d,id+key)
+  }
   function runFollowup() {followup.stop();if(worker.running || inFlight){followup.restart();return}var a=queuedAction,args=queuedArgs;queuedAction="";if(opened && a)perform(a,args)}
   function abortRequest(message) {failRequest(message);if(worker.running)worker.signal(9)}
+  Timer {id:autoPreview;interval:800;onTriggered:root.livePreview()}
   Timer {id:coalesce;interval:700;onTriggered:root.editGroup=""}
   Timer {id:followup;interval:1;onTriggered:root.runFollowup()}
   Timer {interval:5000;running:root.inFlight && !root.helperStarted;onTriggered:root.abortRequest("Could not start the renderer. Check Node.js 22+.")}
   Timer {interval:50000;running:root.inFlight;onTriggered:root.abortRequest("Operation timed out. Reload the saved document to check whether the save completed.")}
   Process {
     id:worker
+    objectName:"pdfWorker"
     property string action:""
     property string payload:""
     command:["node",root.basePath+"dist/renderer.mjs"]
@@ -263,14 +317,18 @@ Item {
     stdout:StdioCollector {waitForEnd:true;onStreamFinished:root.receiveOutput(text)}
     onExited:function(code,exitStatus){root.receiveExit(code,exitStatus)}
   }
-  component Caption: Label {color:Color.popups.text;opacity:0.65;font.pixelSize:12;Layout.fillWidth:true;wrapMode:Text.Wrap;textFormat:Text.PlainText}
-  component Input: TextField {Layout.fillWidth:true;selectByMouse:true;maximumLength:100}
+  component Action: Ui.Button {focusable:true;opacity:enabled?1:0.4;Layout.minimumHeight:32;Accessible.role:Accessible.Button;Accessible.name:text}
+  component Caption: Label {color:Color.popups.text;opacity:0.65;font.pixelSize:13;Layout.fillWidth:true;wrapMode:Text.Wrap;textFormat:Text.PlainText}
+  component Input: TextField {implicitHeight:34;Layout.fillWidth:true;selectByMouse:true;maximumLength:100}
+  component Choice: ComboBox {implicitHeight:32}
+  component NumberInput: SpinBox {implicitHeight:32}
   component CopyArea: ScrollView {
     id:copyRoot
     property string text:""
     signal edited(string value)
-    Layout.fillWidth:true;Layout.preferredHeight:150;clip:true
-    TextArea {id:area;text:copyRoot.text;wrapMode:TextEdit.Wrap;selectByMouse:true;textFormat:TextEdit.PlainText;onTextChanged:if(activeFocus && text!==copyRoot.text)copyRoot.edited(text)}
+    background:Rectangle {color:Qt.rgba(0,0,0,0.12);border.color:Color.popups.border}
+    Layout.fillWidth:true;Layout.preferredHeight:root.selected && root.selected.type==="heading"?90:150;clip:true
+    TextArea {id:area;padding:10;Accessible.name:"Block text";text:copyRoot.text;wrapMode:TextEdit.Wrap;selectByMouse:true;textFormat:TextEdit.PlainText;onTextChanged:if(activeFocus && text!==copyRoot.text)copyRoot.edited(text)}
   }
   PanelWindow {
     id:window
@@ -284,7 +342,7 @@ Item {
     WlrLayershell.keyboardFocus:root.opened ? WlrKeyboardFocus.OnDemand:WlrKeyboardFocus.None
     exclusionMode:ExclusionMode.Ignore
     Pane {
-      anchors.fill:parent;padding:20
+      anchors.fill:parent;padding:16
       background:Rectangle {radius:Style.cornerRadius;color:Color.popups.background;border.color:Color.popups.border}
       palette.window:Color.popups.background
       palette.base:Color.popups.background
@@ -292,6 +350,48 @@ Item {
       palette.windowText:Color.popups.text
       palette.buttonText:Color.popups.text
       palette.button:Color.popups.background
+  Popup {
+    id:colourPicker;objectName:"colourPicker";anchors.centerIn:parent;width:360;modal:true;focus:true;padding:20
+    property color selectedColor:"#18212b"
+    property real hue:0
+    property real saturation:0
+    property real brightness:0
+    function reject(){close()}
+    function setColour(c){selectedColor=c;hue=Math.max(0,selectedColor.hsvHue);saturation=selectedColor.hsvSaturation;brightness=selectedColor.hsvValue}
+    function updateColour(){selectedColor=Qt.hsva(hue,saturation,brightness,1)}
+    onOpened:setColour(selectedColor)
+    background:Rectangle {color:Color.popups.background;border.color:Color.popups.border;radius:Style.cornerRadius}
+    contentItem:ColumnLayout {
+      spacing:12
+      Label {text:"Choose colour";font.pixelSize:20;color:Color.popups.text}
+      Rectangle {
+        Layout.fillWidth:true;Layout.preferredHeight:190;color:Qt.hsva(colourPicker.hue,1,1,1)
+        Rectangle {anchors.fill:parent;gradient:Gradient {orientation:Gradient.Horizontal;GradientStop {position:0;color:"white"}GradientStop {position:1;color:"transparent"}}}
+        Rectangle {anchors.fill:parent;gradient:Gradient {GradientStop {position:0;color:"transparent"}GradientStop {position:1;color:"black"}}}
+        Rectangle {x:colourPicker.saturation*parent.width-width/2;y:(1-colourPicker.brightness)*parent.height-height/2;width:12;height:12;radius:6;color:"transparent";border.color:colourPicker.brightness>0.5?"black":"white";border.width:2}
+        MouseArea {anchors.fill:parent;function choose(mouse){colourPicker.saturation=Math.max(0,Math.min(1,mouse.x/width));colourPicker.brightness=1-Math.max(0,Math.min(1,mouse.y/height));colourPicker.updateColour()}onPressed:mouse=>choose(mouse);onPositionChanged:mouse=>{if(pressed)choose(mouse)}}
+      }
+      Caption {text:"Hue"}
+      Slider {Layout.fillWidth:true;from:0;to:1;value:colourPicker.hue;Accessible.name:"Hue";onMoved:{colourPicker.hue=value;colourPicker.updateColour()}}
+      RowLayout {
+        Caption {text:"Saturation";Layout.preferredWidth:90}
+        Slider {Layout.fillWidth:true;from:0;to:1;value:colourPicker.saturation;Accessible.name:"Saturation";onMoved:{colourPicker.saturation=value;colourPicker.updateColour()}}
+      }
+      RowLayout {
+        Caption {text:"Brightness";Layout.preferredWidth:90}
+        Slider {Layout.fillWidth:true;from:0;to:1;value:colourPicker.brightness;Accessible.name:"Brightness";onMoved:{colourPicker.brightness=value;colourPicker.updateColour()}}
+      }
+      RowLayout {
+        Rectangle {width:32;height:32;color:colourPicker.selectedColor;border.color:Color.popups.border}
+        Input {Layout.fillWidth:true;text:colourPicker.selectedColor.toString();color:Color.popups.text;background:Rectangle {color:Color.popups.background;border.color:Color.popups.border}Accessible.name:"Hex colour";validator:RegularExpressionValidator {regularExpression:/#[0-9a-fA-F]{6}/}onEditingFinished:if(acceptableInput)colourPicker.setColour(text)}
+      }
+      RowLayout {
+        Action {text:"Cancel";onClicked:colourPicker.close()}
+        Item {Layout.fillWidth:true}
+        Action {objectName:"applyColour";text:"Apply colour";onClicked:{root.applyColour(colourPicker.selectedColor.toString());colourPicker.close()}}
+      }
+    }
+  }
   FileDialog {
     id:imagePicker
     title:"Import a PNG or JPEG image"
@@ -299,50 +399,64 @@ Item {
     fileMode:FileDialog.OpenFile
     onAccepted:{if(root.opened && !root.busy)root.request("designImport",{path:selectedFile.toString()})}
   }
-      Shortcut {sequence:"Escape";enabled:root.opened && !root.busy && root.confirmAction==="";onActivated:root.transition("close")}
-      Shortcut {sequence:"Ctrl+S";enabled:root.opened && !root.busy && root.doc!==null && root.confirmAction==="";onActivated:root.request("designSave")}
-      ScrollView {
-        id:workspaceView
-        anchors.fill:parent;clip:true
-        contentWidth:Math.max(1100,availableWidth)
-        contentHeight:availableHeight
+      Shortcut {sequence:"Escape";enabled:root.opened && !root.busy && !freeCanvas.textEditing && !pasteDialog.visible && !colourPicker.visible && root.confirmAction==="";onActivated:root.transition("close")}
+      Shortcut {sequence:"Ctrl+S";enabled:root.opened && !root.busy && root.doc!==null && !pasteDialog.visible && !colourPicker.visible && root.confirmAction==="";onActivated:root.request("designSave")}
       ColumnLayout {
-        width:workspaceView.contentWidth;height:workspaceView.availableHeight;spacing:12;enabled:root.confirmAction===""
+        anchors.fill:parent;spacing:12;enabled:root.confirmAction===""
         RowLayout {
-          Label {text:"PDF Studio";font.pixelSize:24;font.bold:true;color:Color.popups.text}
-          Caption {text:"/  DOCUMENT DESIGNER"}
-          Button {text:"Invoices";enabled:!root.busy;onClicked:root.transition("invoices")}
-          Button {text:"Close";enabled:!root.busy;onClicked:root.transition("close")}
+          Layout.fillWidth:true;spacing:12
+          Label {text:"PDF Studio";font.pixelSize:18;font.bold:true;color:Color.popups.text}
+          Input {Layout.minimumWidth:80;Accessible.name:"Document title";placeholderText:"Untitled document";text:root.doc?root.doc.title:"";enabled:!root.editingBusy && root.doc!==null;onTextEdited:root.edit("title",text)}
+          Label {text:root.dirty?"Edited":"";color:Color.popups.text;opacity:0.6}
+          Action {text:"File";enabled:!root.busy;onClicked:fileMenu.open()
+            Menu {id:fileMenu;y:parent.height;width:280
+              palette.window:Color.popups.background;palette.base:Color.popups.background;palette.text:Color.popups.text;palette.windowText:Color.popups.text;palette.buttonText:Color.popups.text
+              background:Rectangle {color:Color.popups.background;border.color:Color.popups.border}
+              MenuItem {text:"New blank document";onTriggered:root.transition("designNew",{preset:"blank"})}
+              MenuItem {text:"New letter";onTriggered:root.transition("designNew",{preset:"letter"})}
+              MenuItem {text:"New report";onTriggered:root.transition("designNew",{preset:"report"})}
+              MenuItem {text:"New brochure";onTriggered:root.transition("designNew",{preset:"brochure"})}
+              MenuSeparator {}
+              MenuItem {text:"Open document or template…";onTriggered:{root.libraryVisible=!root.libraryVisible;if(root.libraryVisible)root.list(0)}}
+              MenuItem {text:"Save as template";enabled:root.doc!==null;onTriggered:root.request("designTemplate")}
+              MenuSeparator {}
+              MenuItem {text:"Invoice editor";onTriggered:root.transition("invoices")}
+            }
+          }
+          Action {text:"Save";enabled:!root.busy && root.doc!==null;onClicked:root.request("designSave")}
+          Action {text:"Export PDF";bordered:true;enabled:!root.busy && root.doc!==null;onClicked:root.request("designExport",{page:root.freeLayout?root.canvasPage:root.previewPage})}
+          Action {text:"Close";enabled:!root.busy;onClicked:root.transition("close")}
         }
         RowLayout {
-          enabled:!root.busy
-          ComboBox {model:["New blank document","New letter","New report","New brochure"];displayText:"New document";onActivated:function(index){root.transition("designNew",{preset:["blank","letter","report","brochure"][index]})}}
-          ComboBox {model:["Documents","Templates"];onActivated:function(index){root.showTemplates=index===1;root.list(0)}}
-          ComboBox {
+          visible:root.libraryVisible;enabled:!root.busy;Layout.fillWidth:true
+          Choice {model:["Documents","Templates"];onActivated:function(index){root.showTemplates=index===1;root.list(0)}}
+          Choice {
             id:savedPicker;Layout.fillWidth:true;model:root.entries;textRole:"title"
             displayText:root.entryTotal ? "Choose saved "+(root.showTemplates?"template":"document")+" ("+(root.entryOffset+1)+"–"+(root.entryOffset+root.entries.length)+" / "+root.entryTotal+")":"Nothing saved yet"
             delegate:ItemDelegate {required property var modelData;width:savedPicker.width;contentItem:Label {text:modelData.title;textFormat:Text.PlainText;color:Color.popups.text;elide:Text.ElideRight}}
             onActivated:function(index){root.transition(root.showTemplates?"designUseTemplate":"designLoad",{id:root.entries[index].id})}
           }
-          Button {text:"‹";enabled:root.entryOffset>0;onClicked:root.list(root.entryOffset-50);Accessible.name:"Previous saved documents"}
-          Button {text:"›";enabled:root.entryOffset+50<root.entryTotal;onClicked:root.list(root.entryOffset+50);Accessible.name:"Next saved documents"}
-          Button {text:"Save";enabled:root.doc!==null;onClicked:root.request("designSave")}
-          Button {text:"Save as template";enabled:root.doc!==null;onClicked:root.request("designTemplate")}
+          Action {text:"‹";enabled:root.entryOffset>0;onClicked:root.list(root.entryOffset-50);Accessible.name:"Previous saved documents"}
+          Action {text:"›";enabled:root.entryOffset+50<root.entryTotal;onClicked:root.list(root.entryOffset+50);Accessible.name:"Next saved documents"}
+          Action {text:"Done";onClicked:root.libraryVisible=false}
         }
+        Rectangle {Layout.fillWidth:true;height:1;color:Color.popups.border}
         RowLayout {
-          enabled:!root.busy && root.doc!==null
-          Input {placeholderText:"Document title";text:root.doc?root.doc.title:"";onTextEdited:root.edit("title",text)}
-          Caption {Layout.fillWidth:false;text:root.dirty?"Unsaved changes":"Saved / unchanged"}
-          Button {text:"Undo";enabled:root.undoStack.length>0;onClicked:root.history(false)}
-          Button {text:"Redo";enabled:root.redoStack.length>0;onClicked:root.history(true)}
+          Layout.fillWidth:true;enabled:!root.editingBusy && root.doc!==null
+          Choice {Layout.preferredWidth:150;model:root.typeNames;displayText:"+ Insert";onActivated:function(index){root.addBlock(root.types[index]);root.pageSettings=false}}
+          Action {text:"Layers";selected:root.layersVisible;onClicked:root.layersVisible=!root.layersVisible}
+          Action {text:"Undo";enabled:root.undoStack.length>0;onClicked:root.history(false)}
+          Action {text:"Redo";enabled:root.redoStack.length>0;onClicked:root.history(true)}
+          Item {Layout.fillWidth:true}
+          CheckBox {text:"Live preview";checked:root.automaticPreview;onToggled:root.automaticPreview=checked}
+          Action {text:"Page setup";selected:root.pageSettings;onClicked:root.pageSettings=!root.pageSettings}
         }
         RowLayout {
           Layout.fillWidth:true;Layout.fillHeight:true;spacing:16
           ColumnLayout {
-            Layout.preferredWidth:220;Layout.maximumWidth:220;Layout.fillHeight:true
-            enabled:!root.busy && root.doc!==null
+            visible:root.layersVisible;Layout.preferredWidth:160;Layout.maximumWidth:160;Layout.fillHeight:true
+            enabled:!root.editingBusy && root.doc!==null
             Caption {text:(root.freeLayout?"LAYERS · BACK TO FRONT · ":"BLOCKS · ")+(root.doc?root.doc.blocks.length:0)+" / 80"}
-            ComboBox {Layout.fillWidth:true;model:root.typeNames;displayText:"+ Add block";onActivated:function(index){root.addBlock(root.types[index])}}
             ListView {
               id:blockList;Layout.fillWidth:true;Layout.fillHeight:true;clip:true;spacing:4;model:root.doc?root.doc.blocks:[]
               ScrollBar.vertical:ScrollBar {}
@@ -355,93 +469,102 @@ Item {
                   Label {width:parent.width;text:(index+1)+"  "+root.typeNames[root.types.indexOf(modelData.type)];color:Color.popups.text;font.bold:true}
                   Label {width:parent.width;text:modelData.text || (modelData.type==="image"?(modelData.asset?"Image imported":"Choose an image"):"");textFormat:Text.PlainText;color:Color.popups.text;opacity:0.65;elide:Text.ElideRight;maximumLineCount:1}
                 }
-                onClicked:{root.selectedIndex=index;if(root.freeLayout)root.showPdf=false;root.editGroup=""}
+                onClicked:{root.pageSettings=false;root.selectedIndex=index;if(root.freeLayout)root.showPdf=false;root.editGroup=""}
               }
             }
             RowLayout {
-              Button {Layout.preferredWidth:60;Layout.minimumWidth:0;text:"↑";enabled:root.selectedIndex>0;onClicked:root.moveBlock(-1);Accessible.name:"Move block up"}
-              Button {Layout.preferredWidth:60;Layout.minimumWidth:0;text:"↓";enabled:root.selected && root.selectedIndex<root.doc.blocks.length-1;onClicked:root.moveBlock(1);Accessible.name:"Move block down"}
-              Button {Layout.preferredWidth:80;Layout.minimumWidth:0;text:"Copy";enabled:root.selected!==null;onClicked:root.duplicateBlock()}
+              Action {Layout.preferredWidth:40;Layout.minimumWidth:0;text:"↑";enabled:root.selectedIndex>0;onClicked:root.moveBlock(-1);Accessible.name:"Move block up"}
+              Action {Layout.preferredWidth:40;Layout.minimumWidth:0;text:"↓";enabled:root.selected && root.selectedIndex<root.doc.blocks.length-1;onClicked:root.moveBlock(1);Accessible.name:"Move block down"}
+              Action {Layout.preferredWidth:60;Layout.minimumWidth:0;text:"Copy";enabled:root.selected!==null;onClicked:root.duplicateBlock()}
             }
             RowLayout {
               visible:root.freeLayout
-              Button {text:"To back";enabled:root.selected!==null;onClicked:root.moveLayer(false)}
-              Button {text:"To front";enabled:root.selected!==null;onClicked:root.moveLayer(true)}
+              Action {text:"To back";enabled:root.selected!==null;onClicked:root.moveLayer(false)}
+              Action {text:"To front";enabled:root.selected!==null;onClicked:root.moveLayer(true)}
             }
-            Button {text:"Remove block";Layout.fillWidth:true;enabled:root.selected!==null;onClicked:root.removeBlock()}
+            Action {text:"Remove block";Layout.fillWidth:true;enabled:root.selected!==null;onClicked:root.removeBlock()}
           }
           ColumnLayout {
             Layout.fillWidth:true;Layout.fillHeight:true
             RowLayout {
-              Caption {text:root.freeLayout && !root.showPdf?"CANVAS · DRAG / RESIZE":root.previewStale?"PAGE PREVIEW · NEEDS REFRESH":"PAGE PREVIEW"}
-              Button {text:"Refresh";enabled:!root.busy && root.doc!==null;onClicked:root.request("designPreview",{page:root.freeLayout?root.canvasPage:root.previewPage})}
+              Caption {text:root.freeLayout && !root.showPdf?"Canvas":root.previewStale?"PDF preview · changes not rendered":"PDF preview"}
+              Action {text:root.backgroundPreview?"Updating…":root.previewUrl===""?"Preview PDF":"Update preview";enabled:!root.busy && root.doc!==null;onClicked:root.request("designPreview",{page:root.freeLayout?root.canvasPage:root.previewPage})}
             }
             RowLayout {
-              visible:root.freeLayout;enabled:!root.busy
-              Button {text:root.showPdf?"Edit canvas":"Show PDF";enabled:root.showPdf || root.previewUrl!=="";onClicked:root.showPdf=!root.showPdf}
-              CheckBox {text:"Snap 8 pt";checked:root.snapToGrid;onToggled:root.snapToGrid=checked}
-              ComboBox {model:["Fit","150%","200%"];onActivated:function(index){root.canvasZoom=[1,1.5,2][index]}}
-              Button {text:"+ Page";enabled:root.doc && root.doc.pageCount<50;onClicked:root.addPage()}
+              enabled:!root.busy
+              Action {visible:root.freeLayout;text:root.showPdf?"Edit canvas":"Show PDF";onClicked:{root.showPdf=!root.showPdf;if(root.showPdf && !root.busy && (root.previewUrl==="" || root.previewStale))root.request("designPreview",{page:root.canvasPage})}}
+              CheckBox {visible:root.freeLayout && !root.showPdf;text:"Snap 8 pt";checked:root.snapToGrid;onToggled:root.snapToGrid=checked}
+              Choice {Accessible.name:"Page zoom";displayText:root.fitWidth?"Fit width":root.canvasZoom===1 || root.showPdf?"Fit page":root.canvasZoom===1.5?"150%":"200%";model:root.showPdf || !root.freeLayout?["Fit page","Fit width"]:["Fit page","Fit width","150%","200%"];currentIndex:root.fitWidth?1:root.canvasZoom===1?0:root.canvasZoom===1.5?2:3;onActivated:function(index){root.fitWidth=index===1;root.canvasZoom=index<2?1:index===2?1.5:2}}
+              Action {visible:root.freeLayout && !root.showPdf;text:"+ Page";enabled:root.doc && root.doc.pageCount<50;onClicked:root.addPage()}
             }
             Rectangle {
               Layout.fillWidth:true;Layout.fillHeight:true;color:Qt.rgba(0,0,0,0.18);radius:6
-              Image {anchors.fill:parent;anchors.margins:12;source:root.previewUrl;fillMode:Image.PreserveAspectFit;asynchronous:true;cache:false;visible:root.previewUrl!=="" && (!root.freeLayout || root.showPdf)}
-              Label {anchors.centerIn:parent;width:parent.width-48;horizontalAlignment:Text.AlignHCenter;wrapMode:Text.Wrap;color:Color.popups.text;opacity:0.7;text:"Build your document with blocks.\n\nRefresh to see the rendered PDF here.";visible:root.previewUrl==="" && (!root.freeLayout || root.showPdf)}
+              PdfPage {
+                id:pdfImage;anchors.fill:parent;source:root.previewUrl;fitWidth:root.fitWidth
+                visible:status===Image.Ready && !(root.inFlight && !root.backgroundPreview && (worker.action==="designPreview" || worker.action==="designExport")) && root.previewError==="" && (!root.freeLayout || root.showPdf)
+                onStatusChanged:if(status===Image.Error)root.previewError="The PDF was created, but its page image could not be displayed. Try Preview PDF again or open the PDF in your viewer."
+              }
+              ColumnLayout {
+                anchors.centerIn:parent;width:Math.max(100,parent.width-64);spacing:16
+                visible:(!root.freeLayout || root.showPdf) && (root.previewError!=="" || pdfImage.status!==Image.Ready || (root.busy && !root.backgroundPreview && (worker.action==="designPreview" || worker.action==="designExport")))
+                Label {Layout.fillWidth:true;horizontalAlignment:Text.AlignHCenter;wrapMode:Text.Wrap;color:Color.popups.text;font.pixelSize:18;text:root.busy?"Rendering your document…":root.previewError!==""?"Preview unavailable":"Your page starts here"}
+                Label {Layout.fillWidth:true;horizontalAlignment:Text.AlignHCenter;wrapMode:Text.Wrap;color:Color.popups.text;opacity:0.7;textFormat:Text.PlainText;text:root.previewError || (root.busy?"The PDF will appear here when it is ready.":"Insert text, images or a table, then preview your PDF. For drag-and-drop positioning, choose Free layout in Page setup.")}
+                Action {Layout.alignment:Qt.AlignHCenter;text:"Preview PDF";visible:!root.busy;enabled:root.doc!==null;onClicked:root.request("designPreview",{page:root.freeLayout?root.canvasPage:root.previewPage})}
+              }
               FreeCanvas {
-                id:freeCanvas;anchors.fill:parent;visible:root.freeLayout && !root.showPdf
-                enabled:!root.busy && root.confirmAction===""
+                id:freeCanvas;objectName:"freeCanvas";anchors.fill:parent;visible:root.freeLayout && !root.showPdf
+                enabled:!root.editingBusy && root.confirmAction===""
                 document:root.freeLayout?root.doc:null;selectedIndex:root.selectedIndex;page:root.canvasPage
-                snap:root.snapToGrid;zoom:root.canvasZoom;assetBaseUrl:root.assetBaseUrl
+                snap:root.snapToGrid;zoom:root.canvasZoom;fitWidth:root.fitWidth;assetBaseUrl:root.assetBaseUrl
                 onSelectBlock:function(index){root.selectedIndex=index}
                 onFrameCommitted:function(index,x,y,w,h){root.commitFrame(index,x,y,w,h)}
                 onNudge:function(dx,dy){root.nudge(dx,dy)}
                 onUndoRequested:function(redo){root.history(redo)}
+                onRemoveRequested:root.removeBlock()
+                onDuplicateRequested:root.duplicateBlock()
+                onTextEdited:function(id,key,text){root.canvasText(id,key,text)}
               }
             }
             RowLayout {
               Layout.alignment:Qt.AlignHCenter
-              Button {text:"Previous page";enabled:!root.busy && (root.freeLayout && !root.showPdf?root.canvasPage:root.previewPage)>1;onClicked:if(root.freeLayout && !root.showPdf){root.canvasPage--;root.selectedIndex=-1}else root.request("designPreview",{page:root.previewPage-1})}
+              Action {text:"Previous page";enabled:!root.busy && (root.freeLayout && !root.showPdf?root.canvasPage:root.previewPage)>1;onClicked:if(root.freeLayout && !root.showPdf){root.canvasPage--;root.selectedIndex=-1}else root.request("designPreview",{page:root.previewPage-1})}
               Label {text:root.freeLayout && !root.showPdf?root.canvasPage+" / "+root.doc.pageCount:root.previewPage+" / "+root.previewPages;color:Color.popups.text}
-              Button {text:"Next page";enabled:!root.busy && (root.freeLayout && !root.showPdf?root.canvasPage<root.doc.pageCount:root.previewPage<root.previewPages);onClicked:if(root.freeLayout && !root.showPdf){root.canvasPage++;root.selectedIndex=-1}else root.request("designPreview",{page:root.previewPage+1})}
+              Action {text:"Next page";enabled:!root.busy && (root.freeLayout && !root.showPdf?root.canvasPage<root.doc.pageCount:root.previewPage<root.previewPages);onClicked:if(root.freeLayout && !root.showPdf){root.canvasPage++;root.selectedIndex=-1}else root.request("designPreview",{page:root.previewPage+1})}
             }
           }
           ScrollView {
             Layout.preferredWidth:300;Layout.maximumWidth:300;Layout.fillHeight:true;contentWidth:availableWidth;clip:true
+            ScrollBar.horizontal.policy:ScrollBar.AlwaysOff
+            ScrollBar.vertical.policy:ScrollBar.AsNeeded
+            ScrollBar.vertical.active:true
             ColumnLayout {
-              width:parent.width;spacing:10;enabled:!root.busy && root.doc!==null
-              Caption {text:"PAGE SETTINGS"}
-              ComboBox {Layout.fillWidth:true;model:["Flow layout","Free layout"];currentIndex:root.freeLayout?1:0;onActivated:function(index){root.setLayout(index===1)}}
-              Caption {visible:root.freeLayout;text:"Drag blocks or use X/Y below. Arrow keys nudge 1 pt; Shift moves 10 pt. Content is clipped to its frame. Refresh for exact PDF typography."}
-              Button {visible:root.freeLayout;text:"Remove empty page";onClicked:root.removeEmptyPage()}
+              width:parent.width;spacing:10;enabled:!root.editingBusy && root.doc!==null
               RowLayout {
-                ComboBox {Layout.fillWidth:true;model:["A4","Letter"];currentIndex:root.doc?model.indexOf(root.doc.page.size):0;onActivated:root.pageEdit("size",currentText)}
-                ComboBox {model:["portrait","landscape"];currentIndex:root.doc?model.indexOf(root.doc.page.orientation):0;onActivated:root.pageEdit("orientation",currentText)}
+                Action {text:"Content";selected:!root.pageSettings;onClicked:root.pageSettings=false}
+                Action {text:"Page";selected:root.pageSettings;onClicked:root.pageSettings=true}
+              }
+              ColumnLayout {
+                Layout.fillWidth:true;visible:root.pageSettings
+              Caption {text:"PAGE SETTINGS"}
+              Choice {Layout.fillWidth:true;model:["Flow layout","Free layout"];currentIndex:root.freeLayout?1:0;onActivated:function(index){root.setLayout(index===1)}}
+              Caption {visible:root.freeLayout;text:"Drag to position; use the corner to resize. Arrow keys move 1 pt, Shift moves 10. Content outside a frame is clipped."}
+              Action {visible:root.freeLayout;text:"Remove empty page";onClicked:root.removeEmptyPage()}
+              RowLayout {
+                Choice {Layout.fillWidth:true;model:["A4","Letter"];currentIndex:root.doc?model.indexOf(root.doc.page.size):0;onActivated:root.pageEdit("size",currentText)}
+                Choice {model:["portrait","landscape"];currentIndex:root.doc?model.indexOf(root.doc.page.orientation):0;onActivated:root.pageEdit("orientation",currentText)}
               }
               Caption {text:"Page margin (pt)"}
-              SpinBox {from:16;to:100;value:root.doc?root.doc.page.margin:40;onValueModified:root.pageEdit("margin",value)}
+              NumberInput {from:16;to:100;value:root.doc?root.doc.page.margin:40;onValueModified:root.pageEdit("margin",value)}
               Caption {text:"Page colour · #RRGGBB"}
+              RowLayout {
+                Rectangle {width:28;height:28;color:root.doc && /^#[0-9a-f]{6}$/i.test(root.doc.page.background)?root.doc.page.background:"white";border.color:Color.popups.border}
+                Action {text:"Choose page colour…";onClicked:root.chooseColour("page")}
+              }
               Input {maximumLength:7;text:root.doc?root.doc.page.background:"#ffffff";onTextEdited:root.pageEdit("background",text)}
-              Rectangle {Layout.fillWidth:true;height:1;color:Color.popups.border}
-              Caption {text:root.selected?root.typeNames[root.types.indexOf(root.selected.type)].toUpperCase()+" PROPERTIES":"Select a block to edit it"}
+              }
+              Caption {visible:!root.pageSettings;text:root.selected?root.typeNames[root.types.indexOf(root.selected.type)].toUpperCase()+" PROPERTIES":"Select a block to edit it"}
               ColumnLayout {
-                Layout.fillWidth:true;visible:root.selected!==null
-                ColumnLayout {
-                  Layout.fillWidth:true;visible:root.freeLayout && root.selected!==null
-                  Caption {text:"FRAME · POINTS FROM PAGE TOP LEFT"}
-                  RowLayout {
-                    Caption {text:"X";Layout.fillWidth:false}
-                    SpinBox {from:0;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.x):0;onValueModified:root.frameEdit("x",value)}
-                    Caption {text:"Y";Layout.fillWidth:false}
-                    SpinBox {from:0;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.y):0;onValueModified:root.frameEdit("y",value)}
-                  }
-                  Caption {text:"Width / height"}
-                  RowLayout {
-                    SpinBox {from:24;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.width):24;onValueModified:root.frameEdit("width",value)}
-                    SpinBox {from:12;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.height):12;onValueModified:root.frameEdit("height",value)}
-                  }
-                  Caption {text:"Page"}
-                  SpinBox {from:1;to:root.freeLayout?root.doc.pageCount:1;value:root.selected && root.selected.frame?root.selected.frame.page:1;onValueModified:root.frameEdit("page",value)}
-                }
+                Layout.fillWidth:true;visible:!root.pageSettings && root.selected!==null
                 Caption {text:"Text";visible:root.selected && ["heading","text"].indexOf(root.selected.type)>=0}
                 CopyArea {visible:root.selected && ["heading","text"].indexOf(root.selected.type)>=0;text:root.selected?root.selected.text || "":"";onEdited:function(value){root.blockEdit("text",value)}}
                 Caption {text:"Left column";visible:root.selected && root.selected.type==="columns"}
@@ -450,10 +573,10 @@ Item {
                 CopyArea {visible:root.selected && root.selected.type==="columns";text:root.selected?root.selected.right || "":"";onEdited:function(value){root.blockEdit("right",value)}}
                 ColumnLayout {
                   Layout.fillWidth:true;visible:root.selected && root.selected.type==="image"
-                  Button {text:root.selected && root.selected.asset?"Replace image…":"Import image…";onClicked:{root.importTarget=root.selected.id;imagePicker.open()}}
+                  Action {text:root.selected && root.selected.asset?"Replace image…":"Import image…";onClicked:{root.importTarget=root.selected.id;imagePicker.open()}}
                   Caption {text:"PNG/JPEG · up to 4 MiB / 12 megapixels. Imported images are copied locally."}
                   Caption {visible:!root.freeLayout;text:"Width (%)"}
-                  SpinBox {visible:!root.freeLayout;from:10;to:100;value:root.selected?root.selected.width || 100:100;onValueModified:root.blockEdit("width",value)}
+                  NumberInput {visible:!root.freeLayout;from:10;to:100;value:root.selected?root.selected.width || 100:100;onValueModified:root.blockEdit("width",value)}
                   Caption {text:"Description"}
                   Input {maximumLength:200;text:root.selected?root.selected.text || "":"";onTextEdited:root.blockEdit("text",text)}
                 }
@@ -461,56 +584,108 @@ Item {
                   Layout.fillWidth:true;visible:root.selected && root.selected.type==="table"
                   CheckBox {text:"First row is a repeated header";checked:root.selected?root.selected.header || false:false;onToggled:root.blockEdit("header",checked)}
                   RowLayout {
-                    Button {text:"+ Row";onClicked:root.tableSize("row",1)}
-                    Button {text:"− Row";onClicked:root.tableSize("row",-1)}
+                    Action {text:"+ Row";onClicked:root.tableSize("row",1)}
+                    Action {text:"− Row";onClicked:root.tableSize("row",-1)}
                   }
                   RowLayout {
-                    Button {text:"+ Column";onClicked:root.tableSize("column",1)}
-                    Button {text:"− Column";onClicked:root.tableSize("column",-1)}
+                    Action {text:"+ Column";onClicked:root.tableSize("column",1)}
+                    Action {text:"− Column";onClicked:root.tableSize("column",-1)}
                   }
-                  Caption {text:"Cells are listed one row at a time. Maximum 40 rows × 6 columns."}
-                  Repeater {
-                    model:root.selected && root.selected.type==="table"?root.selected.rows.length:0
-                    delegate:ColumnLayout {
-                      id:tableRow
-                      required property int index
-                      Layout.fillWidth:true
-                      Caption {text:"ROW "+(tableRow.index+1)}
+                  RowLayout {
+                    Action {objectName:"pasteCellsButton";text:"Paste cells…";onClicked:{tablePaste.text="";pasteDialog.error="";pasteDialog.open()}}
+                    Action {text:"Copy table";onClicked:{clipboardText.text=root.selected.rows.map(function(row){return row.join("\t")}).join("\n");clipboardText.selectAll();clipboardText.copy();clipboardText.text=""}}
+                  }
+                  Caption {text:"Selected cell: row "+(root.tableRowIndex+1)+", column "+(root.tableColumnIndex+1)+". Row / column actions use this cell."}
+                  ScrollView {
+                    ScrollBar.horizontal.policy:ScrollBar.AlwaysOn
+                    Layout.fillWidth:true;Layout.preferredHeight:Math.min(260,root.selected && root.selected.rows?root.selected.rows.length*42+28:100)
+                    contentWidth:Math.max(availableWidth,root.selected && root.selected.rows?root.selected.rows[0].length*140:280);clip:true
+                    Column {
+                      width:parent.width;spacing:4
                       Repeater {
-                        model:root.selected && root.selected.rows && root.selected.rows[tableRow.index]?root.selected.rows[tableRow.index].length:0
-                        delegate:Input {required property int index;maximumLength:300;text:root.selected && root.selected.rows && root.selected.rows[tableRow.index]?root.selected.rows[tableRow.index][index]:"";onTextEdited:root.tableCell(tableRow.index,index,text)}
+                        model:root.selected && root.selected.type==="table"?root.selected.rows.length:0
+                        delegate:Row {
+                          id:tableRow;required property int index;spacing:4
+                          Repeater {
+                            model:root.selected && root.selected.rows && root.selected.rows[tableRow.index]?root.selected.rows[tableRow.index].length:0
+                            delegate:Input {
+                              required property int index;width:136;maximumLength:300
+                              onActiveFocusChanged:if(activeFocus){root.tableRowIndex=tableRow.index;root.tableColumnIndex=index}
+                              Accessible.name:"Row "+(tableRow.index+1)+", column "+(index+1)
+                              text:root.selected && root.selected.rows && root.selected.rows[tableRow.index]?root.selected.rows[tableRow.index][index]:""
+                              onTextEdited:root.tableCell(tableRow.index,index,text)
+                            }
+                          }
+                        }
                       }
                     }
                   }
                 }
                 Caption {text:"Height (pt)";visible:!root.freeLayout && root.selected && ["image","spacer","divider"].indexOf(root.selected.type)>=0}
-                SpinBox {visible:!root.freeLayout && root.selected && ["image","spacer","divider"].indexOf(root.selected.type)>=0;from:root.selected && root.selected.type==="image"?24:root.selected && root.selected.type==="divider"?1:4;to:root.selected && root.selected.type==="divider"?8:500;value:root.selected?root.selected.height || 24:24;onValueModified:root.blockEdit("height",value)}
+                NumberInput {visible:!root.freeLayout && root.selected && ["image","spacer","divider"].indexOf(root.selected.type)>=0;from:root.selected && root.selected.type==="image"?24:root.selected && root.selected.type==="divider"?1:4;to:root.selected && root.selected.type==="divider"?8:500;value:root.selected?root.selected.height || 24:24;onValueModified:root.blockEdit("height",value)}
                 ColumnLayout {
                   Layout.fillWidth:true;visible:root.selected && ["heading","text","columns","table"].indexOf(root.selected.type)>=0
                   Caption {text:"Font family"}
-                  ComboBox {Layout.fillWidth:true;model:["sans","serif","mono"];currentIndex:root.selected?model.indexOf(root.selected.font):0;onActivated:root.blockEdit("font",currentText)}
+                  Choice {Accessible.name:"Font family";Layout.fillWidth:true;model:["sans","serif","mono"];currentIndex:root.selected?model.indexOf(root.selected.font):0;onActivated:root.blockEdit("font",currentText)}
                   RowLayout {
-                    SpinBox {from:8;to:48;value:root.selected?root.selected.size:11;onValueModified:root.blockEdit("size",value)}
+                    NumberInput {Accessible.name:"Font size in points";from:8;to:48;value:root.selected?root.selected.size:11;onValueModified:root.blockEdit("size",value)}
                     CheckBox {text:"Bold";checked:root.selected?root.selected.bold:false;onToggled:root.blockEdit("bold",checked)}
                   }
                 }
+                RowLayout {visible:root.selected && ["image","spacer","pageBreak"].indexOf(root.selected.type)<0
+                  Rectangle {width:28;height:28;color:root.selected && /^#[0-9a-f]{6}$/i.test(root.selected.color)?root.selected.color:"black";border.color:Color.popups.border}
+                  Action {text:"Choose text / line colour…";onClicked:root.chooseColour("block")}
+                }
                 Caption {text:"Colour · #RRGGBB";visible:root.selected && ["image","spacer","pageBreak"].indexOf(root.selected.type)<0}
-                Input {visible:root.selected && ["image","spacer","pageBreak"].indexOf(root.selected.type)<0;maximumLength:7;text:root.selected?root.selected.color:"#18212b";onTextEdited:root.blockEdit("color",text)}
+                Input {visible:root.selected && ["image","spacer","pageBreak"].indexOf(root.selected.type)<0;Accessible.name:"Text colour, hexadecimal";maximumLength:7;text:root.selected?root.selected.color:"#18212b";onTextEdited:root.blockEdit("color",text)}
                 Caption {text:"Alignment";visible:root.selected && ["divider","spacer","pageBreak"].indexOf(root.selected.type)<0}
-                ComboBox {visible:root.selected && ["divider","spacer","pageBreak"].indexOf(root.selected.type)<0;Layout.fillWidth:true;model:["left","center","right"];currentIndex:root.selected?model.indexOf(root.selected.align):0;onActivated:root.blockEdit("align",currentText)}
+                Choice {visible:root.selected && ["divider","spacer","pageBreak"].indexOf(root.selected.type)<0;Layout.fillWidth:true;model:["left","center","right"];currentIndex:root.selected?model.indexOf(root.selected.align):0;onActivated:root.blockEdit("align",currentText)}
+                Action {visible:root.freeLayout;text:root.frameSettings?"Hide position & size":"Position & size…";onClicked:root.frameSettings=!root.frameSettings}
+                ColumnLayout {
+                  Layout.fillWidth:true;visible:root.freeLayout && root.frameSettings && root.selected!==null
+                  Caption {text:"FRAME · POINTS FROM PAGE TOP LEFT"}
+                  RowLayout {
+                    Caption {text:"X";Layout.fillWidth:false}
+                    NumberInput {from:0;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.x):0;onValueModified:root.frameEdit("x",value)}
+                    Caption {text:"Y";Layout.fillWidth:false}
+                    NumberInput {from:0;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.y):0;onValueModified:root.frameEdit("y",value)}
+                  }
+                  Caption {text:"Width / height"}
+                  RowLayout {
+                    NumberInput {from:24;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.width):24;onValueModified:root.frameEdit("width",value)}
+                    NumberInput {from:12;to:842;editable:true;value:root.selected && root.selected.frame?Math.round(root.selected.frame.height):12;onValueModified:root.frameEdit("height",value)}
+                  }
+                  Caption {text:"Page"}
+                  NumberInput {from:1;to:root.freeLayout?root.doc.pageCount:1;value:root.selected && root.selected.frame?root.selected.frame.page:1;onValueModified:root.frameEdit("page",value)}
+                }
                 Caption {text:"Space after block (pt)";visible:!root.freeLayout && root.selected && root.selected.type!=="pageBreak"}
-                SpinBox {visible:!root.freeLayout && root.selected && root.selected.type!=="pageBreak";from:0;to:60;value:root.selected?root.selected.spacing:12;onValueModified:root.blockEdit("spacing",value)}
+                NumberInput {visible:!root.freeLayout && root.selected && root.selected.type!=="pageBreak";from:0;to:60;value:root.selected?root.selected.spacing:12;onValueModified:root.blockEdit("spacing",value)}
               }
             }
           }
         }
-        Label {Layout.fillWidth:true;text:root.status;textFormat:Text.PlainText;wrapMode:Text.Wrap;color:Color.popups.text}
+        Rectangle {Layout.fillWidth:true;height:1;color:Color.popups.border}
         RowLayout {
-          Caption {text:root.freeLayout?"Local documents · Free layout · Refresh for the exact PDF":"Local documents · Flow layout · Refresh preview after editing"}
-          Button {text:"Open PDF";visible:root.outputUrl!=="";onClicked:if(!Qt.openUrlExternally(root.outputUrl))root.status="Could not open the PDF. Check your default PDF viewer."}
-          Button {text:"Export PDF";enabled:!root.busy && root.doc!==null;onClicked:root.request("designExport")}
+          Label {Layout.fillWidth:true;text:root.status;textFormat:Text.PlainText;wrapMode:Text.Wrap;maximumLineCount:2;color:Color.popups.text;opacity:0.75}
+          Action {text:"Open PDF ↗";visible:root.outputUrl!=="";onClicked:if(!Qt.openUrlExternally(root.outputUrl))root.status="Could not open the PDF. Check your default PDF viewer."}
         }
       }
+      TextEdit {id:clipboardText;visible:false}
+      Popup {
+        id:pasteDialog;property string error:"";anchors.centerIn:parent;width:Math.min(600,window.width-60);modal:true;focus:true;padding:20
+        background:Rectangle {color:Color.popups.background;border.color:Color.popups.border}
+        contentItem:ColumnLayout {
+          Label {text:"Paste spreadsheet cells";color:Color.popups.text;font.pixelSize:20}
+          Caption {text:"Copy cells from a spreadsheet, then paste below. Tabs separate columns; new lines separate rows. Existing cells are replaced from the selected cell."}
+          ScrollView {Layout.fillWidth:true;Layout.preferredHeight:240
+            TextArea {id:tablePaste;objectName:"tablePaste";color:Color.popups.text;selectionColor:"#338fbb";selectedTextColor:"white";background:Rectangle {color:Color.popups.background;border.color:Color.popups.border}wrapMode:TextEdit.NoWrap;textFormat:TextEdit.PlainText;selectByMouse:true;Accessible.name:"Tab-separated cells"}
+          }
+          Caption {text:pasteDialog.error;visible:text!==""}
+          RowLayout {
+            Action {text:"Cancel";onClicked:pasteDialog.close()}
+            Action {objectName:"applyCells";text:"Apply cells";enabled:tablePaste.text.length>0 && tablePaste.text.length<=128000;onClicked:{if(root.pasteCells(tablePaste.text))pasteDialog.close();else pasteDialog.error=root.status}}
+          }
+        }
       }
       Popup {
         id:confirmDialog;anchors.centerIn:parent;visible:root.opened && root.confirmAction!=="";modal:true;focus:true;closePolicy:Popup.NoAutoClose;padding:24
@@ -521,9 +696,9 @@ Item {
           Label {text:"Save your changes?";font.pixelSize:22;color:Color.popups.text}
           Label {text:"This document has unsaved edits.";color:Color.popups.text}
           RowLayout {
-            Button {text:"Cancel";onClicked:root.confirmAction=""}
-            Button {text:"Discard";onClicked:root.discardChanges()}
-            Button {text:"Save";onClicked:root.saveThenContinue()}
+            Action {text:"Cancel";onClicked:root.confirmAction=""}
+            Action {text:"Discard";onClicked:root.discardChanges()}
+            Action {text:"Save";onClicked:root.saveThenContinue()}
           }
         }
       }

@@ -7,8 +7,8 @@
     "package-lock.json": "3758746bbafaa0ce1560b30f574793d79d4daee5d8fb0c184fae97c100729a61",
     "package.json": "eea723e8f7368c8c6d78e552d36e6b7be86b175902c0d206729c2f99a7a861a4",
     "renderer/assets.ts": "780de2a2a4a19a32dd4879d333ab26dda335ec3642205eb6601fa33f27720096",
-    "renderer/cli.ts": "9fb3700024b12123983275eac63b4c5e54ceefc025be2a9bfb7a07f34adddb22",
-    "renderer/design-cli.ts": "ff24f3c52bd535c327e630db3e959851e782bdbbc9ac6946bffdb2354a5f2ddf",
+    "renderer/cli.ts": "6b2936e9a7ec6b88d71763f9e9260a98b975c1a1675318c18fc325b17f260277",
+    "renderer/design-cli.ts": "290b5efb9b80a14819d72b1b285a600cde98b21ef20f928f9b6ef6abc0ae578b",
     "renderer/design-render.tsx": "f88047f4ff009256451c559ee7d45dc7e93d6176c645b503329ee02a46174d75",
     "renderer/design-store.ts": "20e2f05f5d184af72b596a78e78ae0ea0c93754f63a93572c5e281e7504cfeb2",
     "renderer/document.ts": "15bbcf31ff5af60d8179603a85e28118a9f38b19a19baee5e32e691da8cd3317",
@@ -23,6 +23,7 @@
     "renderer/io.ts": "e63af7605af8ee7323dbd67dc0c8101d0b60ec3613c9eb5d4f440db3dc9a0e24",
     "renderer/lock.ts": "016c7e5bb55193b465645403a513143a0e1144d98d8d55d3d6a057da590a8839",
     "renderer/model.ts": "f06d25b5bb21bb57002c96eb488801be4a86531ada63960cef2bbfe37e3a87ac",
+    "renderer/preview.ts": "863abda19b5283e38419dc7ccc34f437e7a3c13802a128eb2f23ee50856179d4",
     "renderer/store.ts": "331e866f7405a53cfeddc180f974a9a3b5edcbf7af8640b59df0fca188b36ad3",
     "renderer/vendor/registry/bases/forme/components/page-header/page-header.tsx": "031ba27cbb244f468767013ca74656690e410c29684b80de7b3267d0168ab8d5",
     "renderer/vendor/registry/bases/forme/components/text/text.tsx": "33324f74870fbc55771469b6386c32b0b1062d193a50c31c33dd1a14f8de63a5",
@@ -36,8 +37,8 @@
   },
   "assets": {
     "renderer.mjs": {
-      "bytes": 214104,
-      "sha256": "4bbd68144fb8bbd44c8606cf181fa863ff3da76300a5dd3245a26c5897b8d7f4"
+      "bytes": 215909,
+      "sha256": "164bc4f8723aec0d0b7aaa62447aa2703215c540a29144165ac4b23b1ae79e49"
     },
     "forme.cjs": {
       "bytes": 13408,

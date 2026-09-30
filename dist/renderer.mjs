@@ -98,11 +98,64 @@ var init_io = __esm({
   }
 });
 
-// renderer/model.ts
+// renderer/preview.ts
+import { mkdir, chmod, readdir, lstat, unlink } from "node:fs/promises";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+async function trimPreviewCache(cache, protectedPaths) {
+  const files = [];
+  for (const name of await readdir(cache)) {
+    if (!/^(?:preview|document|invoice)-[0-9a-f-]+\.(?:png|pdf)$/.test(name)) continue;
+    const path = join(cache, name);
+    const stat2 = await lstat(path).catch(() => null);
+    if (stat2?.isFile()) files.push({ path, size: stat2.size, time: stat2.mtimeMs });
+  }
+  files.sort((a, b) => Number(protectedPaths.includes(b.path)) - Number(protectedPaths.includes(a.path)) || b.time - a.time);
+  let bytes2 = 0, count = 0;
+  for (const file of files) {
+    if (protectedPaths.includes(file.path) || count < 128 && bytes2 + file.size <= 128 * 1024 * 1024) {
+      bytes2 += file.size;
+      count++;
+    } else await unlink(file.path).catch(() => {
+    });
+  }
+}
+async function previewPdf(path, page = 1) {
+  const cache = join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "omarchy-pdf-studio");
+  const base = join(cache, `preview-${randomUUID()}`);
+  try {
+    if (!Number.isInteger(page) || page < 1 || page > 1e3) throw Error("Invalid preview page.");
+    await mkdir(cache, { recursive: true, mode: 448 });
+    const { stdout } = await exec("/usr/bin/timeout", ["--signal=KILL", "10s", "/usr/bin/pdfinfo", path], { timeout: 12e3, maxBuffer: 8192, env: { ...process.env, LC_ALL: "C" } });
+    const pages = Number(/^Pages:\s+(\d+)\s*$/m.exec(stdout)?.[1]);
+    if (!Number.isInteger(pages) || pages < 1 || pages > 1e3) throw Error("Preview supports up to 1,000 pages.");
+    const selected = Math.min(page, pages);
+    await exec("/usr/bin/timeout", ["--signal=KILL", "15s", "/usr/bin/pdftoppm", "-f", String(selected), "-l", String(selected), "-singlefile", "-scale-to", "1600", "-png", path, base], { timeout: 17e3, maxBuffer: 8192 });
+    await chmod(base + ".png", 384);
+    await trimPreviewCache(cache, [path, base + ".png"]).catch(() => {
+    });
+    return { previewUrl: pathToFileURL(base + ".png").href, page: selected, pages };
+  } catch (e) {
+    return { previewError: "PDF created, but its preview is unavailable. Check Poppler (pdfinfo and pdftoppm). " + String(e.message).slice(0, 200) };
+  }
+}
+var exec;
+var init_preview = __esm({
+  "renderer/preview.ts"() {
+    "use strict";
+    exec = promisify(execFile);
+  }
+});
+
+// renderer/model.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
 function fresh() {
   const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-  return { id: randomUUID(), revision: 0, number: "", date: today, due: today, company: "", companyAddress: "", customer: "", customerAddress: "", currency: "GBP", taxRate: "0", payment: "", notes: "", items: [{ description: "", quantity: "1", price: "0.00" }] };
+  return { id: randomUUID2(), revision: 0, number: "", date: today, due: today, company: "", companyAddress: "", customer: "", customerAddress: "", currency: "GBP", taxRate: "0", payment: "", notes: "", items: [{ description: "", quantity: "1", price: "0.00" }] };
 }
 function decimal(value, places, label) {
   if (typeof value !== "string" || !new RegExp("^\\d{1,9}(?:\\.\\d{1," + places + "})?$").test(value)) throw Error(`${label}: enter a positive decimal with at most ${places} decimal places.`);
@@ -208,9 +261,9 @@ var init_lock = __esm({
 });
 
 // renderer/document.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 function block(type) {
-  const b = { id: randomUUID3(), type, font: "sans", size: type === "heading" ? 26 : 11, bold: type === "heading", color: "#18212b", align: "left", spacing: 12 };
+  const b = { id: randomUUID4(), type, font: "sans", size: type === "heading" ? 26 : 11, bold: type === "heading", color: "#18212b", align: "left", spacing: 12 };
   if (type === "heading" || type === "text") b.text = type === "heading" ? "Your heading" : "Write your text here.";
   if (type === "columns") {
     b.left = "Left column";
@@ -230,7 +283,7 @@ function block(type) {
   return b;
 }
 function newDesign(preset = "blank") {
-  const d = { schema: 1, id: randomUUID3(), revision: 0, title: "Untitled document", template: false, page: { size: "A4", orientation: "portrait", margin: 40, background: "#ffffff" }, blocks: [] };
+  const d = { schema: 1, id: randomUUID4(), revision: 0, title: "Untitled document", template: false, page: { size: "A4", orientation: "portrait", margin: 40, background: "#ffffff" }, blocks: [] };
   if (preset === "letter") {
     d.title = "Letter";
     d.blocks = [{ ...block("heading"), text: "Your name" }, { ...block("text"), text: "Your address\nDate" }, { ...block("text"), text: "Dear recipient,\n\nWrite your letter here.\n\nYours sincerely,\nYour name" }];
@@ -329,10 +382,10 @@ var init_document = __esm({
 });
 
 // renderer/design-store.ts
-import { mkdir as mkdir2, open as open4, rename as rename2, unlink as unlink2 } from "node:fs/promises";
-import { join as join2 } from "node:path";
-import { homedir as homedir2 } from "node:os";
-import { randomUUID as randomUUID4 } from "node:crypto";
+import { mkdir as mkdir3, open as open4, rename as rename2, unlink as unlink3 } from "node:fs/promises";
+import { join as join3 } from "node:path";
+import { homedir as homedir3 } from "node:os";
+import { randomUUID as randomUUID5 } from "node:crypto";
 var DesignStore;
 var init_design_store = __esm({
   "renderer/design-store.ts"() {
@@ -341,13 +394,13 @@ var init_design_store = __esm({
     init_io();
     init_lock();
     DesignStore = class {
-      constructor(directory = join2(process.env.XDG_DATA_HOME || join2(homedir2(), ".local/share"), "omarchy-pdf-studio")) {
+      constructor(directory = join3(process.env.XDG_DATA_HOME || join3(homedir3(), ".local/share"), "omarchy-pdf-studio")) {
         this.directory = directory;
       }
       directory;
       async read() {
         try {
-          const s = JSON.parse(await readBounded(join2(this.directory, "designs.json"), 16 * 1024 * 1024));
+          const s = JSON.parse(await readBounded(join3(this.directory, "designs.json"), 16 * 1024 * 1024));
           if (!s || s.schema !== 1 || !Array.isArray(s.documents) || s.documents.length > 128) throw Error("Invalid document collection.");
           const docs = s.documents.map((d) => validateDesign(d));
           if (new Set(docs.map((d) => d.id)).size !== docs.length) throw Error("Duplicate document identities.");
@@ -370,8 +423,8 @@ var init_design_store = __esm({
       }
       async save(input) {
         const d = validateDesign(input);
-        await mkdir2(this.directory, { recursive: true, mode: 448 });
-        const release = await acquireLock(join2(this.directory, "designs.lock"));
+        await mkdir3(this.directory, { recursive: true, mode: 448 });
+        const release = await acquireLock(join3(this.directory, "designs.lock"));
         try {
           const docs = await this.read(), index = docs.findIndex((x) => x.id === d.id);
           if (index < 0 && d.revision !== 0 || index >= 0 && docs[index].revision !== d.revision) throw Error("Document changed elsewhere. Reopen it before editing.");
@@ -382,7 +435,7 @@ var init_design_store = __esm({
           else docs[index] = d;
           const json = JSON.stringify({ schema: 1, documents: docs });
           if (Buffer.byteLength(json) > 16 * 1024 * 1024) throw Error("Document library exceeds 16 MiB.");
-          const temp = join2(this.directory, `.designs-${randomUUID4()}.tmp`);
+          const temp = join3(this.directory, `.designs-${randomUUID5()}.tmp`);
           try {
             const file = await open4(temp, "wx", 384);
             try {
@@ -391,7 +444,7 @@ var init_design_store = __esm({
             } finally {
               await file.close();
             }
-            await rename2(temp, join2(this.directory, "designs.json"));
+            await rename2(temp, join3(this.directory, "designs.json"));
             const dir = await open4(this.directory);
             try {
               await dir.sync();
@@ -399,7 +452,7 @@ var init_design_store = __esm({
               await dir.close();
             }
           } finally {
-            await unlink2(temp).catch(() => {
+            await unlink3(temp).catch(() => {
             });
           }
           return d;
@@ -409,23 +462,23 @@ var init_design_store = __esm({
       }
       async template(input) {
         const d = validateDesign(input);
-        return this.save({ ...d, id: randomUUID4(), revision: 0, template: true });
+        return this.save({ ...d, id: randomUUID5(), revision: 0, template: true });
       }
       async useTemplate(id) {
         const d = await this.load(id);
         if (!d.template) throw Error("Select a template.");
-        return { ...d, id: randomUUID4(), revision: 0, template: false };
+        return { ...d, id: randomUUID5(), revision: 0, template: false };
       }
     };
   }
 });
 
 // renderer/assets.ts
-import { open as open5, mkdir as mkdir3, readdir, stat, rename as rename3, unlink as unlink3 } from "node:fs/promises";
+import { open as open5, mkdir as mkdir4, readdir as readdir2, stat, rename as rename3, unlink as unlink4 } from "node:fs/promises";
 import { constants as constants2 } from "node:fs";
-import { join as join3, isAbsolute } from "node:path";
+import { join as join4, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash, randomUUID as randomUUID5 } from "node:crypto";
+import { createHash, randomUUID as randomUUID6 } from "node:crypto";
 async function bytes(path) {
   const f = await open5(path, constants2.O_RDONLY | constants2.O_NONBLOCK | constants2.O_NOFOLLOW);
   try {
@@ -478,18 +531,18 @@ async function importImage(directory, input) {
   const path = input.startsWith("file:") ? fileURLToPath(input) : input;
   if (!isAbsolute(path)) throw Error("Choose a local image with an absolute path.");
   const data = await bytes(path), info = imageInfo(data), asset = createHash("sha256").update(data).digest("hex") + "." + info.extension;
-  const dir = join3(directory, "assets");
-  await mkdir3(dir, { recursive: true, mode: 448 });
-  const release = await acquireLock(join3(directory, "assets.lock"));
+  const dir = join4(directory, "assets");
+  await mkdir4(dir, { recursive: true, mode: 448 });
+  const release = await acquireLock(join4(directory, "assets.lock"));
   try {
-    const names = (await readdir(dir)).filter((name) => ASSET.test(name));
+    const names = (await readdir2(dir)).filter((name) => ASSET.test(name));
     if (!names.includes(asset)) {
       if (names.length >= 128) throw Error("The image library supports 128 imported images.");
       let total = 0;
-      for (const name of names) if (ASSET.test(name)) total += (await stat(join3(dir, name))).size;
+      for (const name of names) if (ASSET.test(name)) total += (await stat(join4(dir, name))).size;
       if (total + data.length > 128 * 1024 * 1024) throw Error("The image library exceeds 128 MiB.");
     }
-    const temporary = join3(dir, `.image-${randomUUID5()}.tmp`);
+    const temporary = join4(dir, `.image-${randomUUID6()}.tmp`);
     try {
       const file = await open5(temporary, "wx", 384);
       try {
@@ -498,7 +551,7 @@ async function importImage(directory, input) {
       } finally {
         await file.close();
       }
-      await rename3(temporary, join3(dir, asset));
+      await rename3(temporary, join4(dir, asset));
       const folder = await open5(dir);
       try {
         await folder.sync();
@@ -506,7 +559,7 @@ async function importImage(directory, input) {
         await folder.close();
       }
     } finally {
-      await unlink3(temporary).catch(() => {
+      await unlink4(temporary).catch(() => {
       });
     }
     return { asset, ...info };
@@ -516,7 +569,7 @@ async function importImage(directory, input) {
 }
 async function imageData(directory, asset) {
   if (!ASSET.test(asset)) throw Error("Invalid image reference.");
-  const data = await bytes(join3(directory, "assets", asset));
+  const data = await bytes(join4(directory, "assets", asset));
   const info = imageInfo(data);
   if (createHash("sha256").update(data).digest("hex") + "." + info.extension !== asset) throw Error("Imported image has changed. Import it again.");
   return { src: `data:image/${info.extension === "jpg" ? "jpeg" : "png"};base64,${data.toString("base64")}`, ...info };
@@ -2113,8 +2166,8 @@ function recordCanvasOperations(draw) {
     setLineCap(cap) {
       operations.push({ op: "SetLineCap", cap });
     },
-    setLineJoin(join6) {
-      operations.push({ op: "SetLineJoin", join: join6 });
+    setLineJoin(join7) {
+      operations.push({ op: "SetLineJoin", join: join7 });
     },
     save() {
       operations.push({ op: "Save" });
@@ -4741,22 +4794,27 @@ var design_cli_exports = {};
 __export(design_cli_exports, {
   designRequest: () => designRequest
 });
-import { mkdir as mkdir4, writeFile, chmod } from "node:fs/promises";
-import { join as join4 } from "node:path";
-import { homedir as homedir3 } from "node:os";
-import { randomUUID as randomUUID6 } from "node:crypto";
-import { pathToFileURL } from "node:url";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { mkdir as mkdir5, writeFile } from "node:fs/promises";
+import { join as join5 } from "node:path";
+import { homedir as homedir4 } from "node:os";
+import { randomUUID as randomUUID7 } from "node:crypto";
+import { pathToFileURL as pathToFileURL2 } from "node:url";
 async function designRequest(r) {
   const store = new DesignStore();
   switch (r.action) {
-    case "designNew":
-      return { document: newDesign(r.preset ?? "blank"), assetBaseUrl: pathToFileURL(join4(store.directory, "assets") + "/").href };
+    case "designNew": {
+      const document = newDesign(r.preset ?? "blank");
+      if ((r.preset ?? "blank") === "blank") {
+        document.schema = 2;
+        document.layout = "free";
+        document.pageCount = 1;
+      }
+      return { document, assetBaseUrl: pathToFileURL2(join5(store.directory, "assets") + "/").href };
+    }
     case "designList":
       return store.list(r.template ?? false, r.offset ?? 0);
     case "designLoad":
-      return { document: await store.load(r.id), assetBaseUrl: pathToFileURL(join4(store.directory, "assets") + "/").href };
+      return { document: await store.load(r.id), assetBaseUrl: pathToFileURL2(join5(store.directory, "assets") + "/").href };
     case "designSave":
       return { document: await store.save(r.document) };
     case "designTemplate":
@@ -4772,36 +4830,24 @@ async function designRequest(r) {
       if (!Number.isInteger(page) || page < 1 || page > 1e3) throw Error("Invalid preview page.");
       const { renderDesign: renderDesign2 } = await Promise.resolve().then(() => (init_design_render(), design_render_exports));
       const data = await renderDesign2(d, store.directory);
-      const dir = r.action === "designExport" ? join4(homedir3(), "Documents", "PDF Studio") : join4(process.env.XDG_CACHE_HOME || join4(homedir3(), ".cache"), "omarchy-pdf-studio");
-      await mkdir4(dir, { recursive: true, mode: 448 });
-      const base = join4(dir, `document-${d.id}-${randomUUID6()}`), path = base + ".pdf";
+      const dir = r.action === "designExport" ? join5(homedir4(), "Documents", "PDF Studio") : join5(process.env.XDG_CACHE_HOME || join5(homedir4(), ".cache"), "omarchy-pdf-studio");
+      await mkdir5(dir, { recursive: true, mode: 448 });
+      const base = join5(dir, `document-${d.id}-${randomUUID7()}`), path = base + ".pdf";
       await writeFile(path, data, { flag: "wx", mode: 384 });
-      const result = { path, url: pathToFileURL(path).href };
-      if (r.action === "designExport") return result;
-      try {
-        const { stdout } = await exec("/usr/bin/timeout", ["--signal=KILL", "10s", "/usr/bin/pdfinfo", path], { timeout: 12e3, maxBuffer: 8192, env: { ...process.env, LC_ALL: "C" } });
-        const match = /^Pages:\s+(\d+)\s*$/m.exec(stdout), pages = Number(match?.[1]);
-        if (!Number.isInteger(pages) || pages < 1 || pages > 1e3) throw Error("Preview supports up to 1,000 pages.");
-        const selected = Math.min(page, pages);
-        await exec("/usr/bin/timeout", ["--signal=KILL", "15s", "/usr/bin/pdftoppm", "-f", String(selected), "-l", String(selected), "-singlefile", "-scale-to", "1200", "-png", path, base], { timeout: 17e3, maxBuffer: 8192 });
-        await chmod(base + ".png", 384);
-        return { ...result, previewUrl: pathToFileURL(base + ".png").href, page: selected, pages };
-      } catch (e) {
-        return { ...result, previewError: "PDF is ready, but inline preview is unavailable. Check that Poppler (pdfinfo and pdftoppm) is installed. " + String(e.message).slice(0, 200) };
-      }
+      const result = { path, url: pathToFileURL2(path).href };
+      return { ...result, ...await previewPdf(path, page) };
     }
     default:
       throw Error("Unknown designer action.");
   }
 }
-var exec;
 var init_design_cli = __esm({
   "renderer/design-cli.ts"() {
     "use strict";
+    init_preview();
     init_document();
     init_design_store();
     init_assets();
-    exec = promisify(execFile);
   }
 });
 
@@ -5646,31 +5692,32 @@ var init_invoice = __esm({
 
 // renderer/cli.ts
 init_io();
-import { pathToFileURL as pathToFileURL2 } from "node:url";
-import { mkdir as mkdir5, writeFile as writeFile2 } from "node:fs/promises";
-import { join as join5 } from "node:path";
-import { homedir as homedir4 } from "node:os";
-import { randomUUID as randomUUID7 } from "node:crypto";
+init_preview();
+import { pathToFileURL as pathToFileURL3 } from "node:url";
+import { mkdir as mkdir6, writeFile as writeFile2 } from "node:fs/promises";
+import { join as join6 } from "node:path";
+import { homedir as homedir5 } from "node:os";
+import { randomUUID as randomUUID8 } from "node:crypto";
 
 // renderer/store.ts
 init_model();
 init_io();
 init_lock();
-import { mkdir, open as open3, rename, unlink } from "node:fs/promises";
-import { join } from "node:path";
-import { homedir } from "node:os";
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { mkdir as mkdir2, open as open3, rename, unlink as unlink2 } from "node:fs/promises";
+import { join as join2 } from "node:path";
+import { homedir as homedir2 } from "node:os";
+import { randomUUID as randomUUID3 } from "node:crypto";
 var MAX_STORE_BYTES = 16 * 1024 * 1024;
 var MAX_DRAFTS = 1e3;
 var PAGE_SIZE = 50;
 var Store = class {
-  constructor(directory = join(process.env.XDG_DATA_HOME || join(homedir(), ".local/share"), "omarchy-pdf-studio")) {
+  constructor(directory = join2(process.env.XDG_DATA_HOME || join2(homedir2(), ".local/share"), "omarchy-pdf-studio")) {
     this.directory = directory;
   }
   directory;
   async read() {
     try {
-      const s = JSON.parse(await readBounded(join(this.directory, "drafts.json"), MAX_STORE_BYTES));
+      const s = JSON.parse(await readBounded(join2(this.directory, "drafts.json"), MAX_STORE_BYTES));
       if (!s || s.schema !== 1 || !Number.isSafeInteger(s.next) || s.next < 1 || s.next >= Number.MAX_SAFE_INTEGER || !Array.isArray(s.drafts) || s.drafts.length > MAX_DRAFTS) throw Error("Invalid data format.");
       const drafts = s.drafts.map((d) => validate(d));
       if (new Set(drafts.map((d) => d.id)).size !== drafts.length || new Set(drafts.map((d) => d.number)).size !== drafts.length) throw Error("Duplicate draft identities or invoice numbers.");
@@ -5693,8 +5740,8 @@ var Store = class {
   }
   async save(input) {
     const d = structuredClone(validate(input));
-    await mkdir(this.directory, { recursive: true, mode: 448 });
-    const release = await acquireLock(join(this.directory, "write.lock"));
+    await mkdir2(this.directory, { recursive: true, mode: 448 });
+    const release = await acquireLock(join2(this.directory, "write.lock"));
     try {
       const state = await this.read();
       const index = state.drafts.findIndex((x) => x.id === d.id);
@@ -5713,7 +5760,7 @@ var Store = class {
       else state.drafts[index] = d;
       const json = JSON.stringify(state);
       if (Buffer.byteLength(json) > MAX_STORE_BYTES) throw Error("Draft storage exceeds the 16 MiB limit. Your data has not been overwritten.");
-      const temp = join(this.directory, `.drafts-${randomUUID2()}.tmp`);
+      const temp = join2(this.directory, `.drafts-${randomUUID3()}.tmp`);
       try {
         const file = await open3(temp, "wx", 384);
         try {
@@ -5722,7 +5769,7 @@ var Store = class {
         } finally {
           await file.close();
         }
-        await rename(temp, join(this.directory, "drafts.json"));
+        await rename(temp, join2(this.directory, "drafts.json"));
         const directory = await open3(this.directory, "r");
         try {
           await directory.sync();
@@ -5730,7 +5777,7 @@ var Store = class {
           await directory.close();
         }
       } finally {
-        await unlink(temp).catch(() => {
+        await unlink2(temp).catch(() => {
         });
       }
       return d;
@@ -5781,11 +5828,11 @@ try {
       if (!d.number) throw Error("Save this draft to assign its invoice number first.");
       const { renderInvoice: renderInvoice2 } = await Promise.resolve().then(() => (init_invoice(), invoice_exports));
       const bytes2 = await renderInvoice2(d);
-      const dir = r.action === "preview" ? join5(process.env.XDG_CACHE_HOME || join5(homedir4(), ".cache"), "omarchy-pdf-studio") : join5(homedir4(), "Documents", "PDF Studio");
-      await mkdir5(dir, { recursive: true, mode: 448 });
-      const path = join5(dir, `invoice-${d.id}-${randomUUID7()}.pdf`);
+      const dir = r.action === "preview" ? join6(process.env.XDG_CACHE_HOME || join6(homedir5(), ".cache"), "omarchy-pdf-studio") : join6(homedir5(), "Documents", "PDF Studio");
+      await mkdir6(dir, { recursive: true, mode: 448 });
+      const path = join6(dir, `invoice-${d.id}-${randomUUID8()}.pdf`);
       await writeFile2(path, bytes2, { flag: "wx", mode: 384 });
-      result = { path, url: pathToFileURL2(path).href };
+      result = { path, url: pathToFileURL3(path).href, ...await previewPdf(path, r.page ?? 1) };
       break;
     }
     default:

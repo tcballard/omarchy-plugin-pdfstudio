@@ -14,7 +14,7 @@ PDF Studio brings document design to an Omarchy panel. Arrange text, images, tab
 
 ## What works in this build
 
-- A native document designer with a block list, rendered page preview and properties.
+- A native document designer with a page workspace, optional layers and contextual controls.
 - Headings, text, PNG/JPEG images, tables, dividers, spacers, two text columns and page breaks.
 - Reorder, duplicate and remove blocks; undo/redo up to 30 changes.
 - Free layout: drag and resize blocks anywhere on a page, with layers, snapping,
@@ -29,20 +29,24 @@ PDF Studio brings document design to an Omarchy panel. Arrange text, images, tab
 
 ## Design a document
 
-Open PDF Studio and choose **New document**, or start adding blocks to the blank
-page. Select a block on the left to edit its content and appearance on the right.
-Use the arrows to change its order. Text flows down the page and continues onto
-new pages in **Flow layout**. Choose **Free layout** in Page settings to place
-blocks yourself. Nested layouts are not supported yet.
-Two-column blocks contain two editable text areas. Tables support up to 40 rows
-and six columns, with an optional repeated header row.
+Open PDF Studio and use **File** to start a document, or **+ Insert** to add
+content to the blank page. **Layers** shows the block list; select a block there
+or on the free canvas to edit it in **Content**. Use the layer arrows to change
+its order. New blank documents start in **Free layout**, ready to drag and resize.
+Letter, report and brochure presets use **Flow layout**, where text continues
+onto new pages. Switch modes in **Page setup**. Nested layouts are not supported yet.
+Double-click a heading, text block or either column on the free canvas to type directly. Ctrl+Enter finishes; Escape restores the text from before that editing session. Text also remains editable in Content.
+
+Tables support up to 40 rows and six columns, with an optional repeated header row. Select a cell to insert/delete its row or column. **Paste cells…** accepts tab-separated spreadsheet cells from the selected cell; **Copy table** copies all cells. Pasting and structural changes each have their own undo step. Page and text colour buttons open a visual picker; hex entry remains available.
 
 In **Free layout**, drag a block to move it and drag its lower-right handle to
-resize it. The inspector provides X, Y, width, height and page controls in points
+resize it. **Position & size…** provides X, Y, width, height and page controls in points
 (72 pt = one inch), measured from the top-left of the page. **Snap 8 pt** enables
 grid snapping; the zoom selector enlarges the canvas with scrollbars. With canvas
 focus, arrow keys move the selected block by 1 pt, or 10 pt with Shift. Ctrl+Z
-undoes and Ctrl+Shift+Z redoes; each drag or resize is one undo step.
+undoes and Ctrl+Shift+Z redoes; each drag or resize is one undo step. Delete removes
+the selected block and Ctrl+D duplicates it while the canvas has focus. **Fit width**
+makes content readable while you scroll; **Fit page** shows the complete page.
 
 The layer list runs back to front. **To back / To front** changes which block
 covers another. Use **+ Page** for another page, and the block's Page control to
@@ -52,7 +56,7 @@ Images fit within their frames while retaining their proportions.
 
 **Content outside a free-layout frame is clipped in the PDF.** Resize the frame
 or shorten the content if needed. The canvas uses Qt text layout as an editing
-guide; **Refresh** shows the exact exported PDF, including font metrics and table
+guide; **Preview PDF / Update preview** shows the exact exported PDF, including font metrics and table
 layout. Use **Edit canvas / Show PDF** to switch views. Export always uses the
 current coordinates, even if the preview is stale.
 
@@ -63,10 +67,14 @@ frames. Either conversion can be undone. Free-layout documents use format versio
 2 so older designer builds reject them rather than silently erase positioning;
 existing version-1 flow documents continue to work.
 
-Choose **Refresh** to see the actual rendered PDF. The preview is marked stale
-after edits; refresh is explicit. **Export PDF** uses the current editor contents.
+Choose **Preview PDF / Update preview** to see the actual rendered PDF. The preview is marked stale
+after edits; **Live preview** refreshes it automatically after an 800 ms pause. You can turn this off and update manually. Background rendering keeps the canvas editable and never switches views. **Export PDF** uses the current editor contents
+and displays the exported PDF in the editor. If the page image cannot be generated
+or loaded, the editor shows an error and keeps **Open PDF** available.
+Automatic preview cache files are pruned to 128 files / 128 MiB, keeping the current result. Exported PDFs are unaffected.
+
 Saving the editable document is a separate action: preview/export does not save
-it. **Save as template** creates a reusable copy; choosing that template starts
+it. **File → Save as template** creates a reusable copy; choosing that template starts
 a new document without changing the original. Close, switching editors and
 opening another document offer Save / Discard / Cancel when there are edits.
 
@@ -76,8 +84,10 @@ document. Each document supports 80 blocks and 128 KiB of content; text areas
 accept up to 4,000 characters and table cells up to 300. Colour fields use
 `#RRGGBB`. The helper reports invalid values without discarding your edits.
 
-Choose **Invoices** for the dedicated invoice form. Invoice preview/export saves
-its draft first. Each line rounds half-up to cents/pence, then tax rounds half-up
+Choose **File → Invoice editor** for the dedicated invoice form. Automatic previews use a temporary DRAFT label for unnumbered invoices and do not save or assign a number. Invoice preview/export saves
+its draft first, then displays the result in the **PDF preview** tab. Use
+**Invoice details** to return to editing, or **Open PDF** for your external viewer.
+Addresses, payment details and notes accept multiple lines. Each line rounds half-up to cents/pence, then tax rounds half-up
 on the subtotal. No tax-inclusive pricing or mixed rates yet. Invoices support
 100 line items; business/customer addresses, notes and payment fields accept
 500 characters, and line descriptions accept 200.
@@ -85,7 +95,7 @@ on the subtotal. No tax-inclusive pricing or mixed rates yet. Invoices support
 ## Try the development checkout
 
 Requirements: Omarchy Quattro, Node.js 22+, Git, util-linux (`/usr/bin/flock`) and a PDF viewer.
-Inline designer previews also need Poppler (`/usr/bin/pdfinfo` and
+Inline PDF previews also need Poppler (`/usr/bin/pdfinfo` and
 `/usr/bin/pdftoppm`) and coreutils (`/usr/bin/timeout`). Without Poppler, the PDF
 still renders and can be opened in your viewer. On Arch, install it with `sudo pacman -S poppler`. Current Omarchy
 installs configure Node.js through Mise; it must be available to the shell.
@@ -157,7 +167,7 @@ See [DESIGN.md](DESIGN.md) for boundaries and [VERIFICATION.md](VERIFICATION.md)
 for exact evidence and live checks still required. Preview PDFs are examples of
 renderer output, not screenshots of a running Omarchy panel.
 
-Still to build: nested layouts, automatic live PDF preview, document/image
+Still to build: nested layouts, document/image
 cleanup and reusable customer/business profiles.
 
 MIT; vendored pdfcn code retains its MIT notice under `renderer/PDFCN-LICENSE`.

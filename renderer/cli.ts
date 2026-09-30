@@ -1,4 +1,5 @@
 import {requestLine,reply,errorReply} from './io';
+import {previewPdf} from './preview';
 import {pathToFileURL} from 'node:url';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -30,7 +31,7 @@ try {
         const dir=r.action==='preview'?join(process.env.XDG_CACHE_HOME||join(homedir(),'.cache'),'omarchy-pdf-studio'):join(homedir(),'Documents','PDF Studio');
         await mkdir(dir,{recursive:true,mode:0o700});
         const path=join(dir,`invoice-${d.id}-${randomUUID()}.pdf`);
-        await writeFile(path,bytes,{flag:'wx',mode:0o600});result={path,url:pathToFileURL(path).href};break;
+        await writeFile(path,bytes,{flag:'wx',mode:0o600});result={path,url:pathToFileURL(path).href,...await previewPdf(path,r.page??1)};break;
       }
       default:throw Error('Unknown action.');
     }

@@ -42,7 +42,7 @@ test('stdin helper works outside its checkout and saves then previews',async()=>
   const d=run({action:'new'}).draft;
   d.company='Example Studio';d.customer='Sample Customer';d.items[0]={description:'A real rendered invoice',quantity:'2.5',price:'120.00'};
   const saved=run({action:'save',draft:d});assert.equal(saved.ok,true);
-  const preview=run({action:'preview',draft:saved.draft});assert.equal(preview.ok,true);
+  const preview=run({action:'preview',draft:saved.draft});assert.equal(preview.ok,true);assert.ok(preview.previewUrl,preview.previewError);assert.equal(preview.page,1);assert.ok(preview.pages>=1);
   assert.equal((await readFile(preview.path)).subarray(0,5).toString(),'%PDF-');
   assert.equal(run({action:'list'}).drafts.length,1);
  }finally{await rm(dir,{recursive:true,force:true});}
@@ -64,7 +64,7 @@ test('distributed renderer runs with no node_modules, npm or tsx',async()=>{
   d.items=[{description:'Packaged PDF export',quantity:'1.125',price:'19.99'}];
   const saved=run({action:'save',draft:d});assert.equal(saved.ok,true);
   assert.equal(run({action:'total',draft:saved.draft}).total,'GBP 26.99');
-  const preview=run({action:'preview',draft:saved.draft});assert.equal(preview.ok,true);
+  const preview=run({action:'preview',draft:saved.draft});assert.equal(preview.ok,true);assert.ok(preview.previewUrl,preview.previewError);assert.equal(preview.page,1);assert.ok(preview.pages>=1);
   assert.equal((await readFile(preview.path)).subarray(0,5).toString(),'%PDF-');
   assert.equal(run({action:'list'}).drafts.length,1);
  }finally{await rm(dir,{recursive:true,force:true});}
