@@ -62,6 +62,7 @@ QtObject {property bool waitForEnd:false;property string text:"";signal streamFi
     engine = QQmlEngine()
     component = QQmlComponent(engine, QUrl.fromLocalFile(str(fixture / 'InvoicePanel.qml')))
     panel = component.create()
+    if panel is not None: panel.setProperty('automaticPreview',False)
     assert panel is not None, [error.toString() for error in component.errors()]
     draft = dict(id='00000000-0000-4000-8000-000000000000', revision=1, number='INV-1',
                  date='2026-09-29', due='2026-09-29', company='Example', companyAddress='',
@@ -163,6 +164,32 @@ QtObject {property bool waitForEnd:false;property string text:"";signal streamFi
             QTest.qWait(30)
             snapped = panel.property('doc').toVariant()['blocks'][0]['frame']
             assert snapped['x'] % 8 == 0 and snapped['y'] % 8 == 0, snapped
+            # Real double-click starts a stable editor outside the block Repeater.
+            box=visual_item(window.contentItem(),'freeBlock-0')
+            QTest.mouseDClick(window,Qt.LeftButton,Qt.NoModifier,box.mapToScene(QPointF(20,20)).toPoint())
+            QTest.qWait(40)
+            editor=visual_item(window.contentItem(),'canvasTextEditor')
+            assert editor.property('activeFocus'), messages
+            QTest.keyClick(window,Qt.Key_A,Qt.ControlModifier)
+            for letter in 'Canvas text':QTest.keyClick(window,Qt.Key(ord(letter.upper())))
+            assert panel.property('doc').toVariant()['blocks'][0]['text']=='canvas text', panel.property('doc').toVariant()
+            assert editor.property('activeFocus'), 'Typing recreated the canvas editor'
+            QTest.keyClick(window,Qt.Key_Return,Qt.ControlModifier)
+            assert not panel.findChild(QObject,'freeCanvas').property('textEditing')
+            # Escape cancels just this text session, and the debounce fires without blocking typing.
+            box=visual_item(window.contentItem(),'freeBlock-0')
+            QTest.mouseDClick(window,Qt.LeftButton,Qt.NoModifier,box.mapToScene(QPointF(20,20)).toPoint())
+            QTest.keyClick(window,Qt.Key_A,Qt.ControlModifier)
+            QTest.keyClick(window,Qt.Key_X)
+            QTest.keyClick(window,Qt.Key_Escape)
+            assert panel.property('doc').toVariant()['blocks'][0]['text']=='canvas text'
+            assert panel.property('opened')
+            panel.setProperty('automaticPreview',True)
+            QTest.qWait(900)
+            assert panel.property('backgroundPreview') and not panel.property('editingBusy')
+            panel.setProperty('automaticPreview',False)
+            panel.findChild(QObject,'pdfWorker').setProperty('running',False)
+            QMetaObject.invokeMethod(panel,'failRequest',Q_ARG('QVariant','Fixture transport stopped'))
             # Canvas shortcuts change objects, not text in the inspector.
             count=len(panel.property('doc').toVariant()['blocks'])
             QTest.keyClick(window, Qt.Key_D, Qt.ControlModifier)

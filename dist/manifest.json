@@ -23,7 +23,7 @@
     "renderer/io.ts": "e63af7605af8ee7323dbd67dc0c8101d0b60ec3613c9eb5d4f440db3dc9a0e24",
     "renderer/lock.ts": "016c7e5bb55193b465645403a513143a0e1144d98d8d55d3d6a057da590a8839",
     "renderer/model.ts": "f06d25b5bb21bb57002c96eb488801be4a86531ada63960cef2bbfe37e3a87ac",
-    "renderer/preview.ts": "b5b80d0e6eedb87a6eca78a9a581adddb5107dc36efad5617270d6c9ec4c6cee",
+    "renderer/preview.ts": "863abda19b5283e38419dc7ccc34f437e7a3c13802a128eb2f23ee50856179d4",
     "renderer/store.ts": "331e866f7405a53cfeddc180f974a9a3b5edcbf7af8640b59df0fca188b36ad3",
     "renderer/vendor/registry/bases/forme/components/page-header/page-header.tsx": "031ba27cbb244f468767013ca74656690e410c29684b80de7b3267d0168ab8d5",
     "renderer/vendor/registry/bases/forme/components/text/text.tsx": "33324f74870fbc55771469b6386c32b0b1062d193a50c31c33dd1a14f8de63a5",
@@ -37,8 +37,8 @@
   },
   "assets": {
     "renderer.mjs": {
-      "bytes": 214996,
-      "sha256": "28f097888ce876beb6a288ff61ae6c155f0a25d77ce227c4c9e84a64c83f83aa"
+      "bytes": 215909,
+      "sha256": "164bc4f8723aec0d0b7aaa62447aa2703215c540a29144165ac4b23b1ae79e49"
     },
     "forme.cjs": {
       "bytes": 13408,

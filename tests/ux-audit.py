@@ -63,17 +63,22 @@ QtObject {
         v=panel.property(name);return v.toVariant() if hasattr(v,'toVariant') else v
     def walk(item):
         yield item
-        for child in item.childItems():yield from walk(child)
+        if hasattr(item,'childItems'):
+            for child in item.childItems():yield from walk(child)
     def click(window,text):
-        candidates=[o for o in walk(window.contentItem()) if QObject.property(o,'text')==text and o.isVisible() and o.isEnabled() and o.metaObject().indexOfSignal('clicked()')>=0]
+        candidates=[o for o in walk(window.contentItem()) if isinstance(o,QObject) and o.property('text')==text and o.isVisible() and o.isEnabled() and o.metaObject().indexOfSignal('clicked()')>=0]
         assert candidates, 'Missing control '+text
         o=candidates[0];QTest.mouseClick(window,Qt.LeftButton,Qt.NoModifier,o.mapToScene(QPointF(o.width()/2,o.height()/2)).toPoint());QTest.qWait(60)
+    def click_named(panel,window,name):
+        o=panel.findChild(QObject,name);assert o is not None
+        pos=o.mapToScene(QPointF(o.width()/2,o.height()/2)).toPoint()
+        QTest.mouseClick(window,Qt.LeftButton,Qt.NoModifier,pos);QTest.qWait(60)
     def capture(window,name):
         QTest.qWait(120);assert window.grabWindow().save(str(out/(name+'.png')))
     engine=QQmlEngine();components=[];windows=[]
     def load(name):
         component=QQmlComponent(engine,QUrl.fromLocalFile(str(fixture/(name+'.qml'))));components.append(component)
-        panel=component.create();assert panel is not None,[e.toString() for e in component.errors()]
+        panel=component.create();assert panel is not None,[e.toString() for e in component.errors()];panel.setProperty('automaticPreview',False)
         window=panel.findChildren(QQuickWindow)[0];window.setParent(None);window.setWidth(1280);window.setHeight(850);panel.setProperty('opened',True);window.show();window.requestActivate();windows.append(window)
         return panel,window
     panel,window=load('Designer')
@@ -126,5 +131,31 @@ QtObject {
     invoke(panel,'blockEdit','asset',imported['asset']);invoke(panel,'commitFrame',value(panel,'selectedIndex'),48,48,280,380)
     capture(window,'13-image')
     click(window,'File');capture(window,'14-file-menu');QTest.keyClick(window,Qt.Key_Escape)
+    invoke(panel,'setDoc',cli(action='designNew',preset='blank')['document'])
+    invoke(panel,'addBlock','heading');invoke(panel,'blockEdit','text','Design on the page')
+    canvas=panel.findChild(QObject,'freeCanvas')
+    invoke(canvas,'beginEditing',0,'text');capture(window,'15-inline-text');invoke(canvas,'finishEditing',False)
+    invoke(panel,'chooseColour','block');QTest.qWait(120)
+    dialog=panel.findChild(QObject,'colourPicker')
+    capture(window,'16-colour-picker')
+    QMetaObject.invokeMethod(dialog,'reject');QTest.qWait(60)
+    assert not dialog.property('visible')
+    old_colour=value(panel,'doc')['blocks'][0]['color']
+    invoke(panel,'chooseColour','block');invoke(dialog,'setColour','#286ea8')
+    click_named(panel,window,'applyColour')
+    assert value(panel,'doc')['blocks'][0]['color']=='#286ea8'
+    invoke(panel,'history',False)
+    assert value(panel,'doc')['blocks'][0]['color']==old_colour
+    window.requestActivate()
+    invoke(panel,'addBlock','table');invoke(panel,'commitFrame',1,48,180,480,180);click_named(panel,window,'pasteCellsButton')
+    panel.findChild(QObject,'tablePaste').setProperty('text','Service\tHours\tRate\nDesign\t8\t75\nDevelopment\t12\t90')
+    capture(window,'17-paste-cells');click_named(panel,window,'applyCells');capture(window,'18-table-pasted')
+    panel.setProperty('automaticPreview',True);QTest.qWait(900)
+    assert value(panel,'backgroundPreview') and not value(panel,'editingBusy')
+    response=cli(action='designPreview',document=value(panel,'doc'),page=1)
+    panel.findChild(QObject,'pdfWorker').setProperty('running',False)
+    invoke(panel,'receiveOutput',json.dumps(response));invoke(panel,'receiveExit',0,0)
+    assert not value(panel,'showPdf') and not value(panel,'previewStale')
+    panel.setProperty('showPdf',True);capture(window,'19-live-preview')
     for w in windows:w.close()
 print('Captured UX flow in',out)

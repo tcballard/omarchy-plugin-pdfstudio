@@ -35,8 +35,9 @@ or on the free canvas to edit it in **Content**. Use the layer arrows to change
 its order. New blank documents start in **Free layout**, ready to drag and resize.
 Letter, report and brochure presets use **Flow layout**, where text continues
 onto new pages. Switch modes in **Page setup**. Nested layouts are not supported yet.
-Two-column blocks contain two editable text areas. Tables support up to 40 rows
-and six columns, with an optional repeated header row.
+Double-click a heading, text block or either column on the free canvas to type directly. Ctrl+Enter finishes; Escape restores the text from before that editing session. Text also remains editable in Content.
+
+Tables support up to 40 rows and six columns, with an optional repeated header row. Select a cell to insert/delete its row or column. **Paste cells…** accepts tab-separated spreadsheet cells from the selected cell; **Copy table** copies all cells. Pasting and structural changes each have their own undo step. Page and text colour buttons open a visual picker; hex entry remains available.
 
 In **Free layout**, drag a block to move it and drag its lower-right handle to
 resize it. **Position & size…** provides X, Y, width, height and page controls in points
@@ -67,9 +68,11 @@ frames. Either conversion can be undone. Free-layout documents use format versio
 existing version-1 flow documents continue to work.
 
 Choose **Preview PDF / Update preview** to see the actual rendered PDF. The preview is marked stale
-after edits; updating it is explicit. **Export PDF** uses the current editor contents
+after edits; **Live preview** refreshes it automatically after an 800 ms pause. You can turn this off and update manually. Background rendering keeps the canvas editable and never switches views. **Export PDF** uses the current editor contents
 and displays the exported PDF in the editor. If the page image cannot be generated
 or loaded, the editor shows an error and keeps **Open PDF** available.
+Automatic preview cache files are pruned to 128 files / 128 MiB, keeping the current result. Exported PDFs are unaffected.
+
 Saving the editable document is a separate action: preview/export does not save
 it. **File → Save as template** creates a reusable copy; choosing that template starts
 a new document without changing the original. Close, switching editors and
@@ -81,7 +84,7 @@ document. Each document supports 80 blocks and 128 KiB of content; text areas
 accept up to 4,000 characters and table cells up to 300. Colour fields use
 `#RRGGBB`. The helper reports invalid values without discarding your edits.
 
-Choose **File → Invoice editor** for the dedicated invoice form. Invoice preview/export saves
+Choose **File → Invoice editor** for the dedicated invoice form. Automatic previews use a temporary DRAFT label for unnumbered invoices and do not save or assign a number. Invoice preview/export saves
 its draft first, then displays the result in the **PDF preview** tab. Use
 **Invoice details** to return to editing, or **Open PDF** for your external viewer.
 Addresses, payment details and notes accept multiple lines. Each line rounds half-up to cents/pence, then tax rounds half-up
@@ -164,7 +167,7 @@ See [DESIGN.md](DESIGN.md) for boundaries and [VERIFICATION.md](VERIFICATION.md)
 for exact evidence and live checks still required. Preview PDFs are examples of
 renderer output, not screenshots of a running Omarchy panel.
 
-Still to build: nested layouts, automatic live PDF preview, document/image
+Still to build: nested layouts, document/image
 cleanup and reusable customer/business profiles.
 
 MIT; vendored pdfcn code retains its MIT notice under `renderer/PDFCN-LICENSE`.

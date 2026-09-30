@@ -7,9 +7,7 @@ actual QML screens and fixed issues visible in the rendering: a blank first-use
 experience, small controls, hard-to-read page scaling, a vertical table editor,
 single-line addresses, an inconsistent File menu and missing inline invoice PDFs.
 
-This is a functioning document editor, but it is not yet a polished, direct
-on-page design tool. The main remaining interaction gaps are inspector-only text
-editing, explicit PDF refresh, hex-only colour entry and limited table editing.
+The follow-up closes the four concrete interaction gaps: free-canvas text editing, debounced automatic PDF previews, visual colour selection and spreadsheet-style table paste with selection-aware row/column actions. Live Omarchy integration checks remain outstanding.
 Those are product limitations, not silently treated as completed work.
 
 ## Evidence and scope
@@ -80,7 +78,7 @@ Previously an empty preview area sent the user into Page setup to discover free 
 
 ### 2. Write and arrange content — Improved
 
-Fit-to-width makes the page readable, with vertical scrolling. Text areas now have visible boundaries; actions and fields have larger targets. Content still edits in the inspector rather than directly on the page.
+Fit-to-width makes the page readable, with vertical scrolling. Text areas now have visible boundaries; actions and fields have larger targets. Double-click text on the free canvas to edit in place; the inspector remains available.
 
 ![Write and arrange content](after/02-design.png)
 
@@ -92,7 +90,7 @@ Cells are now arranged in rows and columns instead of a vertical list. Wider tab
 
 ### 4. Configure the page — Usable
 
-Page settings remain separate from content. Clicking another block returns to Content. Layout conversion, page bounds and undo are covered by state tests. Hex colour fields remain less approachable than a colour picker.
+Page settings remain separate from content. Clicking another block returns to Content. Layout conversion, page bounds and undo are covered by state tests. Page and text colour controls now open a visual picker; hex entry is retained.
 
 ![Configure the page](after/04-page.png)
 
@@ -158,7 +156,7 @@ The File menu now follows the popup palette rather than displaying a white menu 
 
 ## Validation
 
-- 34 Node tests, TypeScript checking, manifest validation and bundle reproducibility pass locally.
+- 39 Node tests, TypeScript checking, manifest validation and bundle reproducibility pass locally.
 - All three offscreen Qt runs pass: invoice, flow designer and free-layout designer.
 - Preview and Export are rendered by the shipped helper and displayed by Qt in both editors.
 - Real-renderer coverage includes a multipage invoice and an unwritable preview cache.
@@ -169,3 +167,33 @@ Reproduce the captures with a checkout of the stated Omarchy revision:
 ```bash
 python3 tests/ux-audit.py --output docs/ux-audit/after --host ../omarchy-upstream
 ```
+
+## Follow-up: close the interaction gaps
+
+### Direct text editing
+
+Double-click a heading, paragraph or either column on the free canvas. A stable text editor preserves focus while the document changes. Ctrl+Enter commits the session; Escape restores its original text without closing the plugin.
+
+![Direct text editing](after/15-inline-text.png)
+
+### Visual colour selection
+
+Page and text/line colours have swatches and a themed Qt colour popup. Acceptance updates the original target and is undoable; cancellation does not change the document.
+
+![Colour picker](after/16-colour-picker.png)
+
+### Table paste and structural editing
+
+Paste spreadsheet cells from the selected cell, with atomic validation and undo. Insert/delete acts on the selected row or column. Copy table supplies tab-separated cells.
+
+![Paste cells](after/17-paste-cells.png)
+
+![Pasted table](after/18-table-pasted.png)
+
+### Automatic PDF preview
+
+Enabled by default, with an 800 ms debounce. Rendering does not disable typing or switch views. Responses for older contents stay marked stale, never provide an export link and schedule the latest render. Unnumbered invoices preview as DRAFT without saving or issuing an invoice number. Cache cleanup bounds generated preview files and preserves unrelated files and symlinks.
+
+![Automatic preview result](after/19-live-preview.png)
+
+The offscreen Qt test exercises actual double-click, typing, Ctrl+Enter, Escape cancellation and timer initiation. The audit supplies a real renderer result through production response handlers after timer initiation. This still substitutes Quickshell Process transport.

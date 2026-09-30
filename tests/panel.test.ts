@@ -15,13 +15,14 @@ const functions=[...qml.matchAll(/^  function /gm)].map(match=>{
 }).join('\n');
 function panel() {
  const items:any[]=[];
- const p:any={doc:null,drafts:[],draftOffset:0,draftTotal:0,opened:true,dirty:false,status:'',outputPath:'',outputUrl:'',totalLabel:'',
+ const p:any={automaticPreview:false,backgroundPreview:false,renderSnapshot:"",autoPreview:{restart(){},stop(){}},colourPicker:{close(){}},doc:null,drafts:[],draftOffset:0,draftTotal:0,opened:true,dirty:false,status:'',outputPath:'',outputUrl:'',totalLabel:'',
   pendingAction:'',pendingDraftId:'',queuedAction:'',confirmAction:'',inFlight:false,helperStarted:false,receivedOutput:false,receivedExit:false,
   responseText:'',responseCode:-1,responseExitStatus:-1,
   worker:{action:'',payload:'',running:false,signal(n:number){this.running=false;}},
   followup:{running:false,start(){this.running=true;},restart(){this.running=true;},stop(){this.running=false;}},
   lines:{get count(){return items.length;},get(i:number){return items[i];},clear(){items.length=0;},append(x:unknown){items.push(x);}}
  };
+ Object.defineProperty(p,'editingBusy',{get:()=>p.busy&&!p.backgroundPreview});
  Object.defineProperty(p,'busy',{get:()=>p.inFlight||p.worker.running||p.followup.running});p.root=p;
  vm.createContext(p);vm.runInContext(functions,p);p.setDoc(fresh());return p;
 }
@@ -78,4 +79,11 @@ test('discard-and-close clears the editor; cancel does not start a request',()=>
  const p=panel();p.dirty=true;p.transition('close');p.confirmAction='';
  assert.equal(p.dirty,true);assert.equal(p.busy,false);assert.equal(p.opened,true);
  p.transition('close');p.discardChanges();assert.equal(p.doc,null);assert.equal(p.dirty,false);assert.equal(p.opened,false);
+});
+
+test('live invoice preview does not save or number the draft and cannot apply stale output',()=>{
+ const p=panel();p.edit('company','Studio');p.request('preview',{automatic:true});
+ assert.equal(JSON.parse(p.worker.payload).draft.number,'DRAFT');assert.equal(p.doc.number,'');assert.equal(p.editingBusy,false);
+ p.edit('company','New studio');output(p,{ok:true,path:'/old.pdf',url:'file:///old.pdf',previewUrl:'file:///old.png',page:1,pages:1});exit(p);
+ assert.equal(p.outputPath,'');assert.equal(p.doc.company,'New studio');assert.equal(p.showPdf,false);assert.equal(p.dirty,true);
 });

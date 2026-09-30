@@ -138,15 +138,23 @@ Editor repair after on-device feedback:
 
 Full Qt UX pass (30 September 2026):
 
-- [Captured audit and before/after screens](docs/ux-audit/README.md): 14 states,
+- [Captured audit and before/after screens](docs/ux-audit/README.md): 19 states,
   1280×850, 1040×850 and 900×650. Uses the actual upstream Ui.Button,
   BorderSurface, BorderOverlay and Style computations with a controlled palette;
   the live style watchers, layer shell and helper Process transport are replaced.
 - Blank documents now start in free layout. Both editors display generated PDFs;
   the shared viewer supports fit-page and fit-width scrolling. Invoice preview
   tests assert a usable image height as well as decoding and visibility.
-- 34 Node tests, typecheck, bundle reproduction and all three Qt interaction
+- 39 Node tests, typecheck, bundle reproduction and all three Qt interaction
   runs pass locally. New checks include multipage invoices, cache failure,
   invoice Preview/Export display, and canvas Delete/Ctrl+D.
 - These captures do not verify the native file picker, actual shell transport,
   screen readers, touchpad scrolling, theme changes or live window lifecycle.
+
+## Live editing follow-up
+
+FreeCanvas provides a stable inline TextEdit outside the block Repeater. Double-click edits text/heading/columns; Ctrl+Enter finishes and Escape restores the session's original text. Tables support bounded TSV paste and selected row/column changes with separate undo steps. A themed Qt colour popup supplies visual page/text colour selection.
+
+Both editors debounce automatic previews by 800 ms, leave editing enabled during background rendering and compare render snapshots before accepting output links. Stale results trigger another preview without switching views. Invoice background previews use a temporary DRAFT number and never save/number drafts. Cache cleanup retains the current output and bounds generated preview files to 128 files / 128 MiB.
+
+Validation includes 39 Node tests, actual offscreen Qt double-click/typing/focus/cancel and timer checks, plus 19 rendered audit states. Live Quickshell transport, Wayland file selection and assistive technology still require on-device verification.

@@ -14,6 +14,11 @@ Item {
   property var shell: null
   property var manifest: null
   signal designerRequested()
+  property bool automaticPreview:true
+  property bool backgroundPreview:false
+  property string renderSnapshot:""
+  readonly property bool editingBusy:busy && !backgroundPreview
+  onAutomaticPreviewChanged:if(automaticPreview)schedulePreview();else autoPreview.stop()
   property bool opened: false
   property var doc: null
   property var drafts: []
@@ -58,7 +63,7 @@ Item {
   // Host hide releases focus immediately. The in-memory draft survives reopen.
   // Saving is explicit; the close button offers Save / Discard / Cancel.
   function close() {
-    opened=false;confirmAction="";pendingAction="";queuedAction="";followup.stop()
+    autoPreview.stop();opened=false;confirmAction="";pendingAction="";queuedAction="";followup.stop()
   }
   function snapshot() {
     var d = JSON.parse(JSON.stringify(doc))
@@ -72,17 +77,28 @@ Item {
   function setDoc(d) {
     doc=JSON.parse(JSON.stringify(d)); lines.clear()
     d.items.forEach(function(x) { lines.append(x) })
-    dirty=false;showPdf=false;previewUrl="";previewError="";previewPage=1;previewPages=1; outputPath="";outputUrl="";totalLabel=""
+    dirty=false;showPdf=false;previewUrl="";previewError="";previewPage=1;previewPages=1; outputPath="";outputUrl="";totalLabel="";schedulePreview()
   }
-  function edit(key,value) { doc[key]=value; dirty=true; outputPath="";totalLabel="" }
+  function invalidate() {dirty=true;outputPath="";outputUrl="";totalLabel="";schedulePreview()}
+  function edit(key,value) {doc[key]=value;invalidate()}
+  function schedulePreview() {if(automaticPreview && opened && doc)autoPreview.restart()}
+  function livePreview() {
+    if(!automaticPreview || !opened || !doc)return
+    if(busy || confirmAction!==""){autoPreview.restart();return}
+    request("preview",{automatic:true})
+  }
   function request(action, offset) {
     if (busy) return
     inFlight=true;helperStarted=false;receivedOutput=false;receivedExit=false
     responseText="";responseCode=-1;responseExitStatus=-1
-    if(action==="preview" || action==="export"){showPdf=true;previewError=""}
+    backgroundPreview=action==="preview" && offset && offset.automatic===true ? true:false
+    renderSnapshot=doc?JSON.stringify(snapshot()):""
+    if(action==="preview" || action==="export"){if(!backgroundPreview)showPdf=true;previewError=""}
     worker.action=action
+    var draft=doc?snapshot():null
+    if(backgroundPreview && draft && !draft.number)draft.number="DRAFT"
     worker.payload=JSON.stringify({action:action,
-      draft:(action==="save" || action==="total" || action==="preview" || action==="export") && doc ? snapshot() : null,
+      draft:(action==="save" || action==="total" || action==="preview" || action==="export") && doc ? draft : null,
       page:previewPage,
       id:action==="load" ? pendingDraftId : null,
       offset:offset === undefined ? draftOffset : offset})
@@ -112,8 +128,10 @@ Item {
     perform(action)
   }
   function failRequest(message) {
-    pendingAction="";queuedAction="";followup.stop();inFlight=false
+    var obsolete=backgroundPreview && renderSnapshot!==JSON.stringify(snapshot())
+    backgroundPreview=false;pendingAction="";queuedAction="";followup.stop();inFlight=false
     responseText="";worker.payload=""
+    if(obsolete){schedulePreview();return}
     status=String(message || "Operation failed.").slice(0,1024)
     if(worker.action==="preview" || worker.action==="export")previewError=status
   }
@@ -161,14 +179,16 @@ Item {
       failRequest("Helper stopped unexpectedly. Reopen the saved draft to check whether the save completed.");return
     }
     if(!validResponse(response)) {failRequest("Renderer returned an incomplete response. Your edits have been kept.");return}
+    var wasBackground=backgroundPreview,stale=wasBackground && renderSnapshot!==JSON.stringify(snapshot())
     if(worker.action === "total" && response.total) totalLabel="Subtotal: "+response.subtotal+" · Tax: "+response.tax+" · Total: "+response.total
     if(response.draft) setDoc(response.draft)
     if(response.drafts) {drafts=response.drafts;draftOffset=response.offset;draftTotal=response.total}
-    if(response.path) {
-      outputPath=response.path;outputUrl=response.url;previewUrl=response.previewUrl || "";previewError=response.previewError || (response.previewUrl?"":"The PDF has no page preview. Retry Preview or use Open PDF.");previewPage=response.page || 1;previewPages=response.pages || 1;showPdf=true
+    if(response.path && !stale) {
+      outputPath=response.path;outputUrl=response.url;previewUrl=response.previewUrl || "";previewError=response.previewError || (response.previewUrl?"":"The PDF has no page preview. Retry Preview or use Open PDF.");previewPage=response.page || 1;previewPages=response.pages || 1;if(!wasBackground)showPdf=true
       status=response.previewError || (worker.action === "preview" ? "Preview ready" : "PDF exported to Documents / PDF Studio")
     } else status=worker.action === "save" ? "Draft saved" : "Ready"
-    responseText="";inFlight=false
+    responseText="";backgroundPreview=false;inFlight=false
+    if(stale)schedulePreview()
     if(opened && (worker.action === "new" || worker.action === "save")) {
       queuedAction=pendingAction || "list";pendingAction="";followup.start()
     } else pendingAction=""
@@ -200,6 +220,7 @@ Item {
     stdout: StdioCollector {waitForEnd:true;onStreamFinished:root.receiveOutput(text)}
     onExited: function(code, exitStatus) {root.receiveExit(code,exitStatus)}
   }
+  Timer {id:autoPreview;interval:800;onTriggered:root.livePreview()}
   Timer {id:followup;interval:1;onTriggered:root.runFollowup()}
   Timer {
     interval:5000;running:root.inFlight && !root.helperStarted
@@ -291,12 +312,13 @@ Item {
           Action {text:"Invoice details";selected:!root.showPdf;enabled:!root.busy;onClicked:root.showPdf=false}
           Action {text:"PDF preview";selected:root.showPdf;enabled:!root.busy && root.doc!==null;onClicked:if(root.outputPath!=="")root.showPdf=true;else root.savedAction("preview")}
           Item {Layout.fillWidth:true}
+          CheckBox {text:"Live preview";checked:root.automaticPreview;onToggled:root.automaticPreview=checked}
           ComboBox {visible:root.showPdf;model:["Fit page","Fit width"];currentIndex:root.fitWidth?1:0;Accessible.name:"Invoice preview zoom";onActivated:function(index){root.fitWidth=index===1}}
         }
         Rectangle {
           visible:root.showPdf;Layout.fillWidth:true;Layout.fillHeight:true;color:Qt.rgba(0,0,0,0.18)
-          PdfPage {id:invoiceImage;anchors.fill:parent;source:root.previewUrl;fitWidth:root.fitWidth;visible:root.previewError==="" && !root.busy;onStatusChanged:if(status===Image.Error)root.previewError="The PDF image could not be displayed. Retry Preview or use Open PDF."}
-          Label {anchors.centerIn:parent;width:parent.width-64;wrapMode:Text.Wrap;horizontalAlignment:Text.AlignHCenter;color:Color.popups.text;textFormat:Text.PlainText;visible:root.busy || invoiceImage.status===Image.Loading || root.previewError!=="";text:root.busy || invoiceImage.status===Image.Loading?"Rendering invoice…":root.previewError}
+          PdfPage {id:invoiceImage;anchors.fill:parent;source:root.previewUrl;fitWidth:root.fitWidth;visible:root.previewError==="" && (!root.busy || root.backgroundPreview);onStatusChanged:if(status===Image.Error)root.previewError="The PDF image could not be displayed. Retry Preview or use Open PDF."}
+          Label {anchors.centerIn:parent;width:parent.width-64;wrapMode:Text.Wrap;horizontalAlignment:Text.AlignHCenter;color:Color.popups.text;textFormat:Text.PlainText;visible:(root.busy && !root.backgroundPreview) || invoiceImage.status===Image.Loading || root.previewError!=="";text:root.busy || invoiceImage.status===Image.Loading?"Rendering invoice…":root.previewError}
         }
         RowLayout {
           visible:root.showPdf;Layout.alignment:Qt.AlignHCenter
@@ -311,7 +333,7 @@ Item {
             ScrollBar.vertical.active:true
           contentWidth:availableWidth
           ColumnLayout {
-            width:parent.width;spacing:16;enabled:!root.busy && root.doc!==null
+            width:parent.width;spacing:16;enabled:!root.editingBusy && root.doc!==null
             RowLayout {
               Field {caption:"Your business";text:root.doc?root.doc.company:"";onEdited:function(value){root.edit("company",value)}}
               Field {caption:"Customer";text:root.doc?root.doc.customer:"";onEdited:function(value){root.edit("customer",value)}}
@@ -339,13 +361,13 @@ Item {
                 required property string quantity
                 required property string price
                 Layout.fillWidth:true
-                Field {caption:"Description";maximumLength:200;text:description;onEdited:function(value){lines.setProperty(index,"description",value);root.dirty=true;root.outputPath="";root.totalLabel=""}}
-                Field {caption:"Quantity";maximumLength:13;Layout.maximumWidth:90;text:quantity;onEdited:function(value){lines.setProperty(index,"quantity",value);root.dirty=true;root.outputPath="";root.totalLabel=""}}
-                Field {caption:"Unit price";maximumLength:12;Layout.maximumWidth:120;text:price;onEdited:function(value){lines.setProperty(index,"price",value);root.dirty=true;root.outputPath="";root.totalLabel=""}}
-                Action {text:"Remove";enabled:lines.count>1;onClicked:{lines.remove(index);root.dirty=true;root.outputPath="";root.totalLabel=""}}
+                Field {caption:"Description";maximumLength:200;text:description;onEdited:function(value){lines.setProperty(index,"description",value);root.invalidate()}}
+                Field {caption:"Quantity";maximumLength:13;Layout.maximumWidth:90;text:quantity;onEdited:function(value){lines.setProperty(index,"quantity",value);root.invalidate()}}
+                Field {caption:"Unit price";maximumLength:12;Layout.maximumWidth:120;text:price;onEdited:function(value){lines.setProperty(index,"price",value);root.invalidate()}}
+                Action {text:"Remove";enabled:lines.count>1;onClicked:{lines.remove(index);root.invalidate()}}
               }
             }
-            Action {text:"+ Add line";enabled:lines.count<100;onClicked:{lines.append({description:"",quantity:"1",price:"0.00"});root.dirty=true;root.outputPath="";root.totalLabel=""}}
+            Action {text:"+ Add line";enabled:lines.count<100;onClicked:{lines.append({description:"",quantity:"1",price:"0.00"});root.invalidate()}}
             Memo {caption:"Payment details";maximumLength:500;text:root.doc?root.doc.payment:"";onEdited:function(value){root.edit("payment",value)}}
             Memo {caption:"Notes";maximumLength:500;text:root.doc?root.doc.notes:"";onEdited:function(value){root.edit("notes",value)}}
           }

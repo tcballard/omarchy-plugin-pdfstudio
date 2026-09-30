@@ -99,13 +99,31 @@ var init_io = __esm({
 });
 
 // renderer/preview.ts
-import { mkdir, chmod } from "node:fs/promises";
+import { mkdir, chmod, readdir, lstat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+async function trimPreviewCache(cache, protectedPaths) {
+  const files = [];
+  for (const name of await readdir(cache)) {
+    if (!/^(?:preview|document|invoice)-[0-9a-f-]+\.(?:png|pdf)$/.test(name)) continue;
+    const path = join(cache, name);
+    const stat2 = await lstat(path).catch(() => null);
+    if (stat2?.isFile()) files.push({ path, size: stat2.size, time: stat2.mtimeMs });
+  }
+  files.sort((a, b) => Number(protectedPaths.includes(b.path)) - Number(protectedPaths.includes(a.path)) || b.time - a.time);
+  let bytes2 = 0, count = 0;
+  for (const file of files) {
+    if (protectedPaths.includes(file.path) || count < 128 && bytes2 + file.size <= 128 * 1024 * 1024) {
+      bytes2 += file.size;
+      count++;
+    } else await unlink(file.path).catch(() => {
+    });
+  }
+}
 async function previewPdf(path, page = 1) {
   const cache = join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "omarchy-pdf-studio");
   const base = join(cache, `preview-${randomUUID()}`);
@@ -118,6 +136,8 @@ async function previewPdf(path, page = 1) {
     const selected = Math.min(page, pages);
     await exec("/usr/bin/timeout", ["--signal=KILL", "15s", "/usr/bin/pdftoppm", "-f", String(selected), "-l", String(selected), "-singlefile", "-scale-to", "1600", "-png", path, base], { timeout: 17e3, maxBuffer: 8192 });
     await chmod(base + ".png", 384);
+    await trimPreviewCache(cache, [path, base + ".png"]).catch(() => {
+    });
     return { previewUrl: pathToFileURL(base + ".png").href, page: selected, pages };
   } catch (e) {
     return { previewError: "PDF created, but its preview is unavailable. Check Poppler (pdfinfo and pdftoppm). " + String(e.message).slice(0, 200) };
@@ -362,7 +382,7 @@ var init_document = __esm({
 });
 
 // renderer/design-store.ts
-import { mkdir as mkdir3, open as open4, rename as rename2, unlink as unlink2 } from "node:fs/promises";
+import { mkdir as mkdir3, open as open4, rename as rename2, unlink as unlink3 } from "node:fs/promises";
 import { join as join3 } from "node:path";
 import { homedir as homedir3 } from "node:os";
 import { randomUUID as randomUUID5 } from "node:crypto";
@@ -432,7 +452,7 @@ var init_design_store = __esm({
               await dir.close();
             }
           } finally {
-            await unlink2(temp).catch(() => {
+            await unlink3(temp).catch(() => {
             });
           }
           return d;
@@ -454,7 +474,7 @@ var init_design_store = __esm({
 });
 
 // renderer/assets.ts
-import { open as open5, mkdir as mkdir4, readdir, stat, rename as rename3, unlink as unlink3 } from "node:fs/promises";
+import { open as open5, mkdir as mkdir4, readdir as readdir2, stat, rename as rename3, unlink as unlink4 } from "node:fs/promises";
 import { constants as constants2 } from "node:fs";
 import { join as join4, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -515,7 +535,7 @@ async function importImage(directory, input) {
   await mkdir4(dir, { recursive: true, mode: 448 });
   const release = await acquireLock(join4(directory, "assets.lock"));
   try {
-    const names = (await readdir(dir)).filter((name) => ASSET.test(name));
+    const names = (await readdir2(dir)).filter((name) => ASSET.test(name));
     if (!names.includes(asset)) {
       if (names.length >= 128) throw Error("The image library supports 128 imported images.");
       let total = 0;
@@ -539,7 +559,7 @@ async function importImage(directory, input) {
         await folder.close();
       }
     } finally {
-      await unlink3(temporary).catch(() => {
+      await unlink4(temporary).catch(() => {
       });
     }
     return { asset, ...info };
@@ -5683,7 +5703,7 @@ import { randomUUID as randomUUID8 } from "node:crypto";
 init_model();
 init_io();
 init_lock();
-import { mkdir as mkdir2, open as open3, rename, unlink } from "node:fs/promises";
+import { mkdir as mkdir2, open as open3, rename, unlink as unlink2 } from "node:fs/promises";
 import { join as join2 } from "node:path";
 import { homedir as homedir2 } from "node:os";
 import { randomUUID as randomUUID3 } from "node:crypto";
@@ -5757,7 +5777,7 @@ var Store = class {
           await directory.close();
         }
       } finally {
-        await unlink(temp).catch(() => {
+        await unlink2(temp).catch(() => {
         });
       }
       return d;

@@ -91,3 +91,11 @@ The shared PdfPage component renders a cached raster with fit-page/fit-width
 scrolling. Invoice preview and export use the same bounded Poppler helper as the
 designer, with the exported PDF retained on rasterization failure. The invoice
 editor switches between details and preview without leaving the hosted panel.
+
+## Live editing follow-up
+
+FreeCanvas provides a stable inline TextEdit outside the block Repeater. Double-click edits text/heading/columns; Ctrl+Enter finishes and Escape restores the session's original text. Tables support bounded TSV paste and selected row/column changes with separate undo steps. A themed Qt colour popup supplies visual page/text colour selection.
+
+Both editors debounce automatic previews by 800 ms, leave editing enabled during background rendering and compare render snapshots before accepting output links. Stale results trigger another preview without switching views. Invoice background previews use a temporary DRAFT number and never save/number drafts. Cache cleanup retains the current output and bounds generated preview files to 128 files / 128 MiB.
+
+Validation includes 39 Node tests, actual offscreen Qt double-click/typing/focus/cancel and timer checks, plus 19 rendered audit states. Live Quickshell transport, Wayland file selection and assistive technology still require on-device verification.
